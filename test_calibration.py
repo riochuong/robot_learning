@@ -19,11 +19,16 @@ Usage:
         --dataset.episode_time_s=30
 """
 
+import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
 from typing import Any
+
+# Force offline mode to prevent HF hub access - use local datasets only
+# Set this before importing lerobot modules to ensure it's respected
+os.environ["HF_HUB_OFFLINE"] = "1"
 
 import numpy as np
 import torch
@@ -68,12 +73,17 @@ except ImportError:
 # Calibration tolerance thresholds (adjust based on your robot)
 JOINT_POSITION_TOLERANCE_RAD = 0.05  # ~2.9 degrees
 MAX_JOINT_ERROR_TOLERANCE_RAD = 0.1  # ~5.7 degrees
+JOINT_POSITION_TOLERANCE_DEG = 3.0  # degrees (alternative when working in degrees)
+
+# Default dataset root directory for offline mode (HF cache location)
+DEFAULT_DATASET_ROOT = Path.home() / ".cache" / "huggingface" / "lerobot"
 
 
 def compare_observations(
     recorded_obs: dict[str, Any],
     replayed_obs: dict[str, Any],
     tolerance: float = JOINT_POSITION_TOLERANCE_RAD,
+    values_in_degrees: bool = True,
 ) -> dict[str, Any]:
     """Compare recorded and replayed observations.
     
@@ -81,6 +91,7 @@ def compare_observations(
         recorded_obs: Observation from recorded dataset
         replayed_obs: Observation from robot during replay
         tolerance: Maximum allowed error in radians
+        values_in_degrees: If True, convert degree errors to radians before comparison
         
     Returns:
         Dictionary with comparison results
@@ -104,12 +115,21 @@ def compare_observations(
         if replayed_state.ndim > 1:
             replayed_state = replayed_state.flatten()
         
+        # Calculate error (in same units as input)
         state_error = np.abs(recorded_state - replayed_state)
+        
+        # Convert to radians if values are in degrees
+        if values_in_degrees:
+            state_error_rad = np.deg2rad(state_error)
+        else:
+            state_error_rad = state_error
+        
         errors["state"] = {
-            "max_error": np.max(state_error),
-            "mean_error": np.mean(state_error),
-            "errors": state_error,
-            "within_tolerance": np.max(state_error) < tolerance,
+            "max_error": np.max(state_error_rad),
+            "mean_error": np.mean(state_error_rad),
+            "errors": state_error_rad,
+            "within_tolerance": np.max(state_error_rad) < tolerance,
+            "max_error_deg": np.max(state_error) if values_in_degrees else np.degrees(np.max(state_error_rad)),
         }
     
     return errors
@@ -130,8 +150,8 @@ class DatasetTestConfig:
     fps: int = 30
     # Task description
     task: str = "Calibration test trajectory"
-    # Episode indices to test (None = all episodes)
-    test_episodes: list[int] | None = None
+    # Episode indices to test as comma-separated string (e.g., "0,1,2"), empty string means all episodes
+    test_episodes: str = ""
     # Skip recording, only replay existing dataset
     skip_record: bool = False
 
@@ -192,11 +212,13 @@ def record_test_episode(
         ),
     )
     
-    # Create dataset locally
+    # Create dataset locally - use HF cache directory as default if root not specified
+    dataset_root = Path(dataset_config.root) if dataset_config.root else DEFAULT_DATASET_ROOT
+    
     dataset = LeRobotDataset.create(
         repo_id=dataset_config.repo_id,
         fps=dataset_config.fps,
-        root=dataset_config.root,
+        root=str(dataset_root),
         robot_type=robot.name,
         features=dataset_features,
         use_videos=False,  # No cameras, so no videos
@@ -251,6 +273,16 @@ def record_test_episode(
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
             action_frame = build_dataset_frame(dataset.features, action_processed, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": dataset_config.task}
+            
+            # Debug: Print first frame details
+            if episode_idx == 0 and frame_count == 0:
+                print(f"\n  DEBUG - First recorded frame:")
+                print(f"    obs_processed keys: {list(obs_processed.keys())}")
+                print(f"    observation_frame keys: {list(observation_frame.keys())}")
+                if f"{OBS_STR}.state" in observation_frame:
+                    print(f"    observation.state value: {observation_frame[f'{OBS_STR}.state']}")
+                    print(f"    observation.state shape/length: {len(observation_frame[f'{OBS_STR}.state'])}")
+            
             dataset.add_frame(frame)
             
             frame_count += 1
@@ -303,7 +335,15 @@ def replay_and_test_calibration(
     
     # Initialize robot
     robot = make_robot_from_config(robot_config)
-    robot_action_processor = make_default_processors()[1]  # robot_action_processor
+    # Get processors - these should match what was used during recording
+    _, robot_action_processor, robot_observation_processor = make_default_processors()
+    
+    # Create a pipeline to process observations the same way they were recorded
+    # This is critical for proper comparison
+    print(f"\n  Dataset info:")
+   # print(f"    Robot type: {dataset.robot_type}")
+    print(f"    FPS: {dataset.fps}")
+    print(f"    Features: {list(dataset.features.keys())}")
     
     # Connect robot
     robot.connect()
@@ -326,6 +366,28 @@ def replay_and_test_calibration(
         actions = episode_frames.select_columns(ACTION)
         observations = episode_frames.select_columns([f"{OBS_STR}.state"])
         
+        print(f"  Total frames in episode: {len(episode_frames)}")
+        print(f"  Observation state features: {dataset.features[f'{OBS_STR}.state']['names']}")
+        
+        # Get the initial position from the recorded data
+        initial_recorded_state = observations[0][f"{OBS_STR}.state"]
+        print(f"\n  Initial recorded position: {initial_recorded_state}")
+        
+        # Move robot to initial position before starting replay
+        print(f"  Moving robot to initial position...")
+        initial_action = {}
+        for i, name in enumerate(dataset.features[ACTION]["names"]):
+            initial_action[name] = float(initial_recorded_state[i])
+        
+        # Process and send initial action to move to start position
+        robot_obs_init = robot.get_observation()
+        processed_initial_action = robot_action_processor((initial_action, robot_obs_init))
+        robot.send_action(processed_initial_action)
+        
+        # Wait a moment for robot to reach position
+        time.sleep(1.0)
+        print(f"  Robot moved to starting position. Beginning replay...\n")
+        
         episode_errors = []
         max_errors_per_frame = []
         
@@ -339,42 +401,79 @@ def replay_and_test_calibration(
                 for i, name in enumerate(dataset.features[ACTION]["names"])
             }
             
-            # Get robot observation
-            robot_obs = robot.get_observation()
+            # Get robot observation BEFORE sending action (for processing)
+            robot_obs_before = robot.get_observation()
             
             # Process action
-            processed_action = robot_action_processor((action, robot_obs))
+            processed_action = robot_action_processor((action, robot_obs_before))
             
             # Send action to robot
             _ = robot.send_action(processed_action)
             
-            # Get replayed observation - convert robot observation dict to array
-            # Robot observation is a dict, we need to extract state values
-            robot_state_values = []
-            for key in sorted(robot_obs.keys()):
-                val = robot_obs[key]
-                if isinstance(val, (int, float)):
-                    robot_state_values.append(float(val))
-                elif isinstance(val, (list, tuple, np.ndarray)):
-                    robot_state_values.extend([float(v) for v in val])
+            # Get robot observation AFTER sending action
+            robot_obs = robot.get_observation()
             
-            replayed_obs = {"observation.state": np.array(robot_state_values, dtype=np.float32)}
+            # Process observation through the same pipeline used during recording
+            obs_processed = robot_observation_processor(robot_obs)
+            
+            # Build dataset frame to match the recording format
+            observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
+            
+            # Extract the state
+            replayed_state = observation_frame.get(f"{OBS_STR}.state")
+            
+            if replayed_state is None:
+                # Fallback: extract directly from obs_processed
+                obs_state_names = dataset.features[f"{OBS_STR}.state"]["names"]
+                robot_state_values = []
+                for name in obs_state_names:
+                    if name in obs_processed:
+                        val = obs_processed[name]
+                        if isinstance(val, (list, tuple, np.ndarray)):
+                            robot_state_values.extend([float(v) for v in val])
+                        else:
+                            robot_state_values.append(float(val))
+                replayed_state = np.array(robot_state_values, dtype=np.float32)
+            
+            replayed_obs = {"observation.state": replayed_state}
+            
+            # Debug output on first few frames
+            if idx == 0:
+                print(f"\n  DEBUG - Frame {idx}:")
+                print(f"    Raw robot obs: {robot_obs}")
+                print(f"    Processed obs keys: {list(obs_processed.keys())}")
+                print(f"    Observation frame keys: {list(observation_frame.keys())}")
+                print(f"    Replayed state: {replayed_state}")
             
             # Get recorded observation
             recorded_state = observations[idx][f"{OBS_STR}.state"]
             recorded_obs = {"observation.state": recorded_state}
             
-            # Compare observations
-            errors = compare_observations(recorded_obs, replayed_obs, tolerance)
+            if idx == 0:
+                print(f"    Recorded state: {recorded_state}")
+                print(f"    Replayed state: {replayed_obs['observation.state']}")
+                print(f"    Lengths: recorded={len(recorded_state)}, replayed={len(replayed_obs['observation.state'])}")
+            
+            # Compare observations (values are in degrees based on dataset stats)
+            errors = compare_observations(recorded_obs, replayed_obs, tolerance, values_in_degrees=True)
             episode_errors.append(errors)
             
             if "state" in errors:
                 max_error = errors["state"]["max_error"]
                 max_errors_per_frame.append(max_error)
                 
+                # Print first few frames for debugging
+                if idx < 3:
+                    print(f"\n  Frame {idx} comparison:")
+                    print(f"    Recorded state shape: {recorded_obs['observation.state'].shape}")
+                    print(f"    Replayed state shape: {replayed_obs['observation.state'].shape}")
+                    print(f"    Recorded: {recorded_obs['observation.state'][:5]}...")
+                    print(f"    Replayed: {replayed_obs['observation.state'][:5]}...")
+                    print(f"    Max error: {max_error:.4f} rad ({errors['state']['max_error_deg']:.2f}°)")
+                
                 # Print warning if error exceeds tolerance
                 if max_error > tolerance:
-                    print(f"  Frame {idx}: Max joint error {max_error:.4f} rad exceeds tolerance {tolerance:.4f}")
+                    print(f"  Frame {idx}: Max joint error {max_error:.4f} rad ({errors['state']['max_error_deg']:.2f}°) exceeds tolerance {tolerance:.4f} rad ({np.degrees(tolerance):.2f}°)")
             
             # Maintain FPS
             precise_sleep(1.0 / dataset.fps - (time.perf_counter() - t0))
@@ -448,16 +547,54 @@ def replay_and_test_calibration(
 def main(cfg: CalibrationTestConfig):
     """Main calibration test function."""
     import logging
+    import os
+    
+    # Force offline mode to prevent HF hub access - use local datasets only
+    os.environ["HF_HUB_OFFLINE"] = "1"
     
     init_logging()
+    
+    # Set default calibration directory if robot.id is provided but calibration_dir is not
+    # Calibration files are stored at: ~/.cache/huggingface/lerobot/calibration/robots/{robot_type}/{robot_id}.json
+    if cfg.robot.id and not cfg.robot.calibration_dir:
+        # Get robot type name from the config class
+        try:
+            # Use the type attribute directly since it's set by the parser
+            robot_type_name = type(cfg.robot).__name__.replace('Config', '').replace('SO', 'so').lower()
+            # Try common naming patterns
+            for pattern in [robot_type_name, f"so{robot_type_name.replace('so', '')}", "so101_follower"]:
+                calibration_dir = DEFAULT_DATASET_ROOT / "calibration" / "robots" / pattern
+                calibration_file = calibration_dir / f"{cfg.robot.id}.json"
+                if calibration_file.exists():
+                    cfg.robot.calibration_dir = calibration_dir
+                    print(f"\n✓ Found calibration file: {calibration_file}")
+                    print(f"  Using calibration for robot.id={cfg.robot.id}")
+                    break
+            else:
+                print(f"\n⚠ Calibration file not found for robot.id={cfg.robot.id}")
+                print(f"  Searched in: {DEFAULT_DATASET_ROOT / 'calibration' / 'robots'}")
+        except Exception as e:
+            # If we can't determine robot type, skip auto-configuration
+            print(f"\n⚠ Could not auto-detect calibration directory: {e}")
+            print(f"  Please specify --robot.calibration_dir manually if needed")
+    
     logging.info(pformat(asdict(cfg)))
     
     # Set default dataset config if not provided
     if cfg.dataset is None:
         cfg.dataset = DatasetTestConfig()
     
-    # Dataset paths
-    dataset_root = Path(cfg.dataset.root) if cfg.dataset.root else Path("./local_datasets")
+    # Dataset paths - use HF cache directory as default prefix for offline mode
+    if cfg.dataset.root:
+        dataset_root = Path(cfg.dataset.root)
+    else:
+        # Default to HF cache directory for offline/local datasets
+        dataset_root = DEFAULT_DATASET_ROOT
+    
+    # Parse test_episodes from comma-separated string to list of integers
+    episode_indices = None
+    if cfg.dataset.test_episodes:
+        episode_indices = [int(x.strip()) for x in cfg.dataset.test_episodes.split(",") if x.strip()]
     
     # Record episodes (unless skipped)
     if not cfg.dataset.skip_record:
@@ -467,16 +604,35 @@ def main(cfg: CalibrationTestConfig):
             dataset_config=cfg.dataset,
         )
     else:
-        # Load existing dataset
-        print(f"\nLoading existing dataset from {dataset_root}/{cfg.dataset.repo_id}...")
-        dataset = LeRobotDataset(cfg.dataset.repo_id, root=dataset_root)
+        # Load existing dataset locally (offline mode already set above)
+        dataset_path = dataset_root / cfg.dataset.repo_id
+        print(f"\nLoading existing dataset from {dataset_path}...")
+        
+        if not dataset_path.exists():
+            raise FileNotFoundError(
+                f"Dataset not found at {dataset_path}. "
+                f"Make sure the dataset exists locally or record it first by removing --dataset.skip_record"
+            )
+        
+        # Load from local path only (HF_HUB_OFFLINE is set at top of function to prevent hub access)
+        try:
+            dataset = LeRobotDataset(cfg.dataset.repo_id, root=str(dataset_path.absolute()))
+        except Exception as e:
+            if "huggingface" in str(e).lower() or "repository not found" in str(e).lower():
+                raise RuntimeError(
+                    f"Failed to load dataset: {e}\n"
+                    f"Make sure the dataset exists locally at {dataset_path}.\n"
+                    f"The script is configured to work offline only. "
+                    f"If you need to download from HuggingFace, do so manually first."
+                ) from e
+            raise
         print(f"  Loaded {dataset.num_episodes} episode(s), {dataset.num_frames} frames")
     
     # Replay and test calibration
     results = replay_and_test_calibration(
         dataset=dataset,
         robot_config=cfg.robot,
-        episode_indices=cfg.dataset.test_episodes,
+        episode_indices=episode_indices,
         tolerance=cfg.tolerance,
         play_sounds=cfg.play_sounds,
     )

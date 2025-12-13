@@ -20,6 +20,7 @@ lerobot-record \
 uv run python test_calibration.py \
     --robot.type=so101_follower \
     --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm_so_101 \
     --dataset.repo_id=data/test_calibration_teleop_1 \
     --dataset.skip_record=True \
     --dataset.test_episodes=0,1,2
