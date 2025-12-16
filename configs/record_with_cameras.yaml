@@ -1,0 +1,34 @@
+# LeRobot Recording Configuration with Two Cameras
+# Usage: lerobot-record --config_path configs/record_with_cameras.yaml
+
+robot:
+  type: so101_follower
+  port: /dev/ttyACM0
+  id: my_follower_arm_so_101
+  cameras:
+    scene:
+      type: opencv
+      index_or_path: /dev/video0
+      fps: 30
+      width: 640
+      height: 480
+    wrist:
+      type: opencv
+      index_or_path: /dev/video2
+      fps: 30
+      width: 640
+      height: 480
+
+teleop:
+  type: so100_leader
+  port: /dev/ttyACM1
+  id: my_leader_arm_so_100
+
+dataset:
+  repo_id: data/teleop_with_cameras
+  push_to_hub: false
+  num_episodes: 20
+  episode_time_s: 60
+  reset_time_s: 5
+  single_task: "Pick and place demonstration"
+
