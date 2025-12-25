@@ -1,0 +1,2123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LeRobot Training Pipeline Deep Dive</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-purple: #a371f7;
+            --accent-orange: #f0883e;
+            --accent-red: #f85149;
+            --accent-yellow: #d29922;
+            --accent-pink: #db61a2;
+            --border-color: #30363d;
+            --code-bg: #1c2128;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.7;
+            padding: 40px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        h2 {
+            font-size: 1.8rem;
+            color: var(--accent-blue);
+            margin: 40px 0 20px 0;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        h3 {
+            font-size: 1.4rem;
+            color: var(--accent-green);
+            margin: 30px 0 15px 0;
+        }
+
+        h4 {
+            font-size: 1.2rem;
+            color: var(--accent-purple);
+            margin: 20px 0 10px 0;
+        }
+
+        h5 {
+            font-size: 1rem;
+            color: var(--accent-orange);
+            margin: 15px 0 8px 0;
+        }
+
+        p {
+            margin: 15px 0;
+            color: var(--text-primary);
+        }
+
+        .subtitle {
+            font-size: 1.2rem;
+            color: var(--text-secondary);
+            margin-bottom: 30px;
+        }
+
+        .toc {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 25px;
+            margin: 30px 0;
+        }
+
+        .toc h3 {
+            color: var(--accent-blue);
+            margin: 0 0 15px 0;
+        }
+
+        .toc ul {
+            list-style: none;
+        }
+
+        .toc li {
+            margin: 8px 0;
+        }
+
+        .toc a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .toc a:hover {
+            color: var(--accent-blue);
+        }
+
+        pre {
+            background: var(--code-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            overflow-x: auto;
+            margin: 15px 0;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 0.85rem;
+            line-height: 1.6;
+        }
+
+        code {
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 0.9em;
+        }
+
+        :not(pre) > code {
+            background: var(--bg-tertiary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: var(--accent-orange);
+        }
+
+        .model-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 25px;
+            margin: 25px 0;
+        }
+
+        .model-header {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .model-icon {
+            font-size: 2rem;
+        }
+
+        .pipeline-diagram {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            white-space: pre;
+        }
+
+        .flow-step {
+            display: inline-block;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--accent-blue);
+            border-radius: 6px;
+            padding: 8px 15px;
+            margin: 5px;
+            font-size: 0.9rem;
+        }
+
+        .flow-arrow {
+            color: var(--accent-green);
+            font-weight: bold;
+            margin: 0 8px;
+        }
+
+        .info-box {
+            background: var(--bg-tertiary);
+            border-left: 4px solid var(--accent-blue);
+            padding: 15px 20px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .warning-box {
+            background: var(--bg-tertiary);
+            border-left: 4px solid var(--accent-orange);
+            padding: 15px 20px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .key-concept {
+            background: linear-gradient(135deg, rgba(88, 166, 255, 0.1), rgba(163, 113, 247, 0.1));
+            border: 1px solid var(--accent-purple);
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 0.9rem;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            border: 1px solid var(--border-color);
+            padding: 12px 15px;
+            text-align: left;
+        }
+
+        .comparison-table th {
+            background: var(--bg-tertiary);
+            color: var(--accent-blue);
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+        }
+
+        .comparison-table tr:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .tensor-shape {
+            color: var(--accent-green);
+            font-family: monospace;
+        }
+
+        .keyword { color: var(--accent-purple); }
+        .string { color: var(--accent-green); }
+        .number { color: var(--accent-orange); }
+        .comment { color: var(--text-secondary); font-style: italic; }
+        .function { color: var(--accent-blue); }
+        .class { color: var(--accent-yellow); }
+
+        ul, ol {
+            margin: 15px 0 15px 25px;
+        }
+
+        li {
+            margin: 8px 0;
+        }
+
+        .architecture-box {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 30px;
+            margin: 25px 0;
+            overflow-x: auto;
+        }
+
+        .arch-diagram {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        .arch-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .arch-box {
+            background: var(--bg-tertiary);
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px 20px;
+            min-width: 180px;
+            text-align: center;
+            position: relative;
+            transition: all 0.2s;
+        }
+
+        .arch-box:hover {
+            border-color: var(--accent-blue);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(88, 166, 255, 0.2);
+        }
+
+        .arch-box-title {
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .arch-box-desc {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+
+        .arch-box-shape {
+            font-size: 0.75rem;
+            color: var(--accent-green);
+            font-family: 'JetBrains Mono', monospace;
+            margin-top: 5px;
+        }
+
+        .arch-arrow {
+            color: var(--accent-green);
+            font-size: 1.5rem;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+
+        .arch-arrow-horizontal {
+            transform: rotate(90deg);
+        }
+
+        .arch-merge {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .arch-merge-line {
+            width: 2px;
+            height: 30px;
+            background: var(--accent-blue);
+        }
+
+        .arch-section {
+            background: linear-gradient(135deg, rgba(88, 166, 255, 0.05), rgba(163, 113, 247, 0.05));
+            border: 2px dashed var(--accent-purple);
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+        }
+
+        .arch-section-title {
+            font-weight: 600;
+            color: var(--accent-purple);
+            margin-bottom: 15px;
+            text-align: center;
+            font-size: 1rem;
+        }
+
+        .arch-box.blue { border-color: var(--accent-blue); }
+        .arch-box.blue .arch-box-title { color: var(--accent-blue); }
+        .arch-box.green { border-color: var(--accent-green); }
+        .arch-box.green .arch-box-title { color: var(--accent-green); }
+        .arch-box.purple { border-color: var(--accent-purple); }
+        .arch-box.purple .arch-box-title { color: var(--accent-purple); }
+        .arch-box.orange { border-color: var(--accent-orange); }
+        .arch-box.orange .arch-box-title { color: var(--accent-orange); }
+        .arch-box.pink { border-color: var(--accent-pink); }
+        .arch-box.pink .arch-box-title { color: var(--accent-pink); }
+        .arch-box.yellow { border-color: var(--accent-yellow); }
+        .arch-box.yellow .arch-box-title { color: var(--accent-yellow); }
+
+        .highlight-blue { color: var(--accent-blue); }
+        .highlight-green { color: var(--accent-green); }
+        .highlight-purple { color: var(--accent-purple); }
+        .highlight-orange { color: var(--accent-orange); }
+        .highlight-pink { color: var(--accent-pink); }
+    </style>
+</head>
+<body>
+    <h1>🤖 LeRobot Training Pipeline Deep Dive</h1>
+    <p class="subtitle">Understanding how data flows from dataset to model for SmolVLA, Pi0, ACT, Groot, and Diffusion policies</p>
+
+    <div class="toc">
+        <h3>📑 Table of Contents</h3>
+        <ul>
+            <li><a href="#overview">1. Overview: The Training Loop</a></li>
+            <li><a href="#dataloader">2. DataLoader & Dataset Loading</a></li>
+            <li><a href="#preprocessing">3. Preprocessing Pipeline</a></li>
+            <li><a href="#smolvla">4. SmolVLA: Vision-Language-Action Model</a></li>
+            <li><a href="#pi0">5. Pi0: PaliGemma + Expert Model</a></li>
+            <li><a href="#pi05">6. Pi0.5: No State, AdaRMS Conditioning</a></li>
+            <li><a href="#pi05-fast">7. Pi0.5-Fast: Optimized for Speed</a></li>
+            <li><a href="#act">8. ACT: Action Chunking Transformer</a></li>
+            <li><a href="#groot">9. Groot: NVIDIA GR00T Integration</a></li>
+            <li><a href="#diffusion">10. Diffusion Policy: Denoising Actions</a></li>
+            <li><a href="#comparison">11. Model Comparison Summary</a></li>
+        </ul>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- SECTION 1: Overview -->
+    <!-- ============================================ -->
+    <h2 id="overview">🔄 1. Overview: The Training Loop</h2>
+
+    <p>The LeRobot training pipeline follows a consistent pattern across all policies. Here's the high-level flow:</p>
+
+    <div class="pipeline-diagram">
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                           LEROBOT TRAINING PIPELINE                                  │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                      │
+│  ┌──────────────┐     ┌─────────────────┐     ┌────────────────┐     ┌────────────┐ │
+│  │   Dataset    │────►│   DataLoader    │────►│  Preprocessor  │────►│   Policy   │ │
+│  │ (Parquet +   │     │ (Batching +     │     │ (Normalize +   │     │  .forward()│ │
+│  │  Videos)     │     │  Shuffling)     │     │  Tokenize)     │     │            │ │
+│  └──────────────┘     └─────────────────┘     └────────────────┘     └─────┬──────┘ │
+│                                                                            │        │
+│                                                                            ▼        │
+│  ┌──────────────┐     ┌─────────────────┐     ┌────────────────┐     ┌────────────┐ │
+│  │   Metrics    │◄────│    Optimizer    │◄────│   Loss Func    │◄────│  Predicted │ │
+│  │   & Logs     │     │  (AdamW + LR    │     │   (L1/MSE/     │     │   Actions  │ │
+│  │              │     │   Scheduler)    │     │   Flow Match)  │     │            │ │
+│  └──────────────┘     └─────────────────┘     └────────────────┘     └────────────┘ │
+│                                                                                      │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+    </div>
+
+    <h3>Training Script Entry Point</h3>
+    <p>The main training loop is in <code>src/lerobot/scripts/lerobot_train.py</code>:</p>
+
+    <pre><code><span class="comment"># Simplified training loop from lerobot_train.py</span>
+<span class="keyword">for</span> _ <span class="keyword">in</span> range(step, cfg.steps):
+    <span class="comment"># 1. Load batch from DataLoader</span>
+    batch = next(dl_iter)
+    
+    <span class="comment"># 2. Apply preprocessing (normalize, tokenize, move to device)</span>
+    batch = preprocessor(batch)
+    
+    <span class="comment"># 3. Forward pass through policy</span>
+    loss, output_dict = policy.forward(batch)
+    
+    <span class="comment"># 4. Backward pass + optimizer step</span>
+    accelerator.backward(loss)
+    optimizer.step()
+    lr_scheduler.step()
+    optimizer.zero_grad()
+    
+    <span class="comment"># 5. Logging and checkpointing</span>
+    <span class="keyword">if</span> step % cfg.save_freq == <span class="number">0</span>:
+        save_checkpoint(...)</code></pre>
+
+    <!-- ============================================ -->
+    <!-- SECTION 2: DataLoader -->
+    <!-- ============================================ -->
+    <h2 id="dataloader">📦 2. DataLoader & Dataset Loading</h2>
+
+    <h3>LeRobotDataset.__getitem__</h3>
+    <p>When the DataLoader requests a sample, <code>LeRobotDataset.__getitem__</code> is called:</p>
+
+    <pre><code><span class="keyword">def</span> <span class="function">__getitem__</span>(<span class="keyword">self</span>, idx) -> dict:
+    <span class="comment"># 1. Load tabular data from HuggingFace dataset (Parquet)</span>
+    item = <span class="keyword">self</span>.hf_dataset[idx]
+    ep_idx = item[<span class="string">"episode_index"</span>].item()
+
+    <span class="comment"># 2. Handle temporal sequences (delta_indices for past/future frames)</span>
+    <span class="keyword">if</span> <span class="keyword">self</span>.delta_indices <span class="keyword">is not None</span>:
+        query_indices, padding = <span class="keyword">self</span>._get_query_indices(idx, ep_idx)
+        query_result = <span class="keyword">self</span>._query_hf_dataset(query_indices)
+        item = {**item, **padding}  <span class="comment"># Add padding masks</span>
+        <span class="keyword">for</span> key, val <span class="keyword">in</span> query_result.items():
+            item[key] = val
+
+    <span class="comment"># 3. Decode video frames for visual observations</span>
+    <span class="keyword">if</span> len(<span class="keyword">self</span>.meta.video_keys) > <span class="number">0</span>:
+        current_ts = item[<span class="string">"timestamp"</span>].item()
+        query_timestamps = <span class="keyword">self</span>._get_query_timestamps(current_ts, query_indices)
+        video_frames = <span class="keyword">self</span>._query_videos(query_timestamps, ep_idx)
+        item = {**video_frames, **item}
+
+    <span class="comment"># 4. Apply image transforms (augmentation)</span>
+    <span class="keyword">if</span> <span class="keyword">self</span>.image_transforms <span class="keyword">is not None</span>:
+        <span class="keyword">for</span> cam <span class="keyword">in</span> <span class="keyword">self</span>.meta.camera_keys:
+            item[cam] = <span class="keyword">self</span>.image_transforms(item[cam])
+
+    <span class="keyword">return</span> item</code></pre>
+
+    <h3>What the DataLoader Returns</h3>
+    <p>A typical batch from the DataLoader contains:</p>
+
+    <table class="comparison-table">
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Shape</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>observation.state</code></td>
+                <td class="tensor-shape">(B, n_obs_steps, state_dim)</td>
+                <td>Robot joint positions, velocities, etc.</td>
+            </tr>
+            <tr>
+                <td><code>observation.images.cam1</code></td>
+                <td class="tensor-shape">(B, n_obs_steps, C, H, W)</td>
+                <td>Camera images (normalized to [0, 1])</td>
+            </tr>
+            <tr>
+                <td><code>action</code></td>
+                <td class="tensor-shape">(B, chunk_size, action_dim)</td>
+                <td>Target action sequence (ground truth)</td>
+            </tr>
+            <tr>
+                <td><code>action_is_pad</code></td>
+                <td class="tensor-shape">(B, chunk_size)</td>
+                <td>Boolean mask for padded actions</td>
+            </tr>
+            <tr>
+                <td><code>task</code></td>
+                <td>List[str] of length B</td>
+                <td>Language task description</td>
+            </tr>
+            <tr>
+                <td><code>timestamp</code></td>
+                <td class="tensor-shape">(B,)</td>
+                <td>Frame timestamp</td>
+            </tr>
+            <tr>
+                <td><code>episode_index</code></td>
+                <td class="tensor-shape">(B,)</td>
+                <td>Episode identifier</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- ============================================ -->
+    <!-- SECTION 3: Preprocessing -->
+    <!-- ============================================ -->
+    <h2 id="preprocessing">⚙️ 3. Preprocessing Pipeline</h2>
+
+    <p>Each policy has a <code>make_*_pre_post_processors()</code> function that creates a preprocessing pipeline. Common steps include:</p>
+
+    <div class="pipeline-diagram">
+Raw Batch from DataLoader
+         │
+         ▼
+┌────────────────────────────────────┐
+│ 1. RenameObservationsProcessorStep │  Rename keys to match pretrained config
+└────────────────────────────────────┘
+         │
+         ▼
+┌────────────────────────────────────┐
+│ 2. AddBatchDimensionProcessorStep  │  Ensure batch dim exists (for inference)
+└────────────────────────────────────┘
+         │
+         ▼
+┌────────────────────────────────────┐
+│ 3. TokenizerProcessorStep          │  Convert task string → token IDs (VLA models)
+│    (SmolVLA, Pi0 only)             │  Output: observation.language_tokens
+└────────────────────────────────────┘
+         │
+         ▼
+┌────────────────────────────────────┐
+│ 4. DeviceProcessorStep             │  Move tensors to GPU (cuda/mps)
+└────────────────────────────────────┘
+         │
+         ▼
+┌────────────────────────────────────┐
+│ 5. NormalizerProcessorStep         │  Normalize features based on dataset stats
+│    - MEAN_STD: (x - mean) / std    │
+│    - MIN_MAX: (x - min) / (max-min)│
+│    - IDENTITY: no normalization    │
+└────────────────────────────────────┘
+         │
+         ▼
+    Preprocessed Batch
+    </div>
+
+    <h3>Normalization Modes</h3>
+    <pre><code><span class="comment"># Example normalization_mapping from SmolVLAConfig</span>
+normalization_mapping = {
+    <span class="string">"VISUAL"</span>: NormalizationMode.IDENTITY,     <span class="comment"># Images: no normalization (already [0,1])</span>
+    <span class="string">"STATE"</span>: NormalizationMode.MEAN_STD,       <span class="comment"># State: (x - μ) / σ</span>
+    <span class="string">"ACTION"</span>: NormalizationMode.MEAN_STD,      <span class="comment"># Actions: (x - μ) / σ</span>
+}</code></pre>
+
+    <!-- ============================================ -->
+    <!-- SECTION 4: SmolVLA -->
+    <!-- ============================================ -->
+    <h2 id="smolvla">🦙 4. SmolVLA: Vision-Language-Action Model</h2>
+
+    <div class="model-section">
+        <div class="model-header">
+            <span class="model-icon">🔮</span>
+            <div>
+                <h3 style="margin: 0; color: var(--accent-pink);">SmolVLA Architecture</h3>
+                <p style="margin: 5px 0 0 0; color: var(--text-secondary);">Lightweight VLM backbone + Action Expert with Flow Matching</p>
+            </div>
+        </div>
+
+        <div class="architecture-box">
+            <div class="arch-diagram">
+                <!-- Input Layer -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box blue">
+                        <div class="arch-box-title">Images</div>
+                        <div class="arch-box-shape">(B, num_cams, C, H, W)</div>
+                    </div>
+                    <div class="arch-box green">
+                        <div class="arch-box-title">Language</div>
+                        <div class="arch-box-shape">(B, seq_len)</div>
+                    </div>
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">State</div>
+                        <div class="arch-box-shape">(B, state_dim)</div>
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Encoding Layer -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box blue">
+                        <div class="arch-box-title">SigLIP Vision Encoder</div>
+                        <div class="arch-box-desc">Extract visual features</div>
+                    </div>
+                    <div class="arch-box green">
+                        <div class="arch-box-title">Tokenizer (SmolVLM)</div>
+                        <div class="arch-box-desc">Tokenize language</div>
+                    </div>
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">State Projection</div>
+                        <div class="arch-box-desc">Linear projection</div>
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Projection Layer -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box blue">
+                        <div class="arch-box-title">Vision Projection</div>
+                        <div class="arch-box-desc">(Connector)</div>
+                    </div>
+                    <div class="arch-box green">
+                        <div class="arch-box-title">Embed Tokens</div>
+                        <div class="arch-box-desc">LLM embedding layer</div>
+                    </div>
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">State Embedding</div>
+                        <div class="arch-box-desc">Projected state</div>
+                    </div>
+                </div>
+
+                <!-- Merge Arrow -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-merge">
+                        <div class="arch-merge-line"></div>
+                        <div class="arch-arrow">↓</div>
+                    </div>
+                </div>
+
+                <!-- Prefix Embeddings Section -->
+                <div class="arch-section">
+                    <div class="arch-section-title">PREFIX EMBEDDINGS</div>
+                    <div class="arch-box purple" style="max-width: 100%;">
+                        <div class="arch-box-title">[img_emb₁, img_emb₂, ..., lang_emb, state_emb]</div>
+                        <div class="arch-box-shape">Shape: (B, prefix_len, hidden_dim)</div>
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- SmolVLM Transformer -->
+                <div class="arch-box blue" style="max-width: 100%;">
+                    <div class="arch-box-title">SmolVLM Transformer</div>
+                    <div class="arch-box-desc">• Processes prefix (images + language + state)</div>
+                    <div class="arch-box-desc">• Generates KV cache for action expert</div>
+                    <div class="arch-box-desc">• Frozen during finetuning (train_expert_only=True)</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                    <div style="margin-left: 10px; color: var(--text-secondary); font-size: 0.85rem;">KV Cache</div>
+                </div>
+
+                <!-- Action Expert -->
+                <div class="arch-box orange" style="max-width: 100%;">
+                    <div class="arch-box-title">ACTION EXPERT</div>
+                    <div class="arch-box-desc">• Input: noisy_actions + timestep embedding</div>
+                    <div class="arch-box-desc">• Cross-attention to VLM's KV cache</div>
+                    <div class="arch-box-desc">• Predicts velocity field (for flow matching)</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Output Projection -->
+                <div class="arch-box green" style="max-width: 100%;">
+                    <div class="arch-box-title">OUTPUT PROJECTION</div>
+                    <div class="arch-box-desc">action_out_proj: Linear(expert_hidden, max_action_dim)</div>
+                    <div class="arch-box-shape">Output: (B, chunk_size, max_action_dim)</div>
+                </div>
+            </div>
+        </div>
+
+        <h4>Step-by-Step Forward Pass (Training)</h4>
+
+        <h5>Step 1: Prepare Images</h5>
+        <pre><code><span class="keyword">def</span> <span class="function">prepare_images</span>(<span class="keyword">self</span>, batch):
+    <span class="string">"""Resize to 512x512 with padding, normalize to [-1, 1] for SigLIP."""</span>
+    images = []
+    <span class="keyword">for</span> key <span class="keyword">in</span> <span class="keyword">self</span>.config.image_features:
+        img = batch[key][:, -<span class="number">1</span>, :, :, :]  <span class="comment"># Take last observation step: (B, C, H, W)</span>
+        
+        <span class="comment"># Resize with padding to maintain aspect ratio</span>
+        img = resize_with_pad(img, <span class="number">512</span>, <span class="number">512</span>, pad_value=<span class="number">0</span>)
+        
+        <span class="comment"># Normalize from [0,1] to [-1,1] as expected by SigLIP</span>
+        img = img * <span class="number">2.0</span> - <span class="number">1.0</span>
+        
+        images.append(img)
+    <span class="keyword">return</span> images, img_masks</code></pre>
+
+        <h5>Step 2: Prepare State (Pad to max_state_dim)</h5>
+        <pre><code><span class="keyword">def</span> <span class="function">prepare_state</span>(<span class="keyword">self</span>, batch):
+    <span class="string">"""Pad state vector to max_state_dim (default: 32)."""</span>
+    state = batch[<span class="string">"observation.state"</span>][:, -<span class="number">1</span>, :]  <span class="comment"># (B, state_dim)</span>
+    state = pad_vector(state, <span class="keyword">self</span>.config.max_state_dim)  <span class="comment"># (B, 32)</span>
+    <span class="keyword">return</span> state</code></pre>
+
+        <h5>Step 3: Embed Prefix (Images + Language + State)</h5>
+        <div class="info-box">
+            <strong>📍 SmolVLA State Position:</strong> State is embedded in the <strong>PREFIX</strong> (with images and language). This is different from Pi0 where state goes in the SUFFIX.
+        </div>
+        <pre><code><span class="keyword">def</span> <span class="function">embed_prefix</span>(<span class="keyword">self</span>, images, img_masks, lang_tokens, lang_masks, state):
+    embs = []
+    att_masks = []
+    
+    <span class="comment"># 3a. Embed images with SigLIP vision encoder</span>
+    <span class="keyword">for</span> img <span class="keyword">in</span> images:
+        img_emb = <span class="keyword">self</span>.vlm_with_expert.embed_image(img)  <span class="comment"># (B, num_patches, hidden_dim)</span>
+        img_emb = img_emb * sqrt(hidden_dim)  <span class="comment"># Scale normalization</span>
+        embs.append(img_emb)
+        att_masks += [<span class="number">0</span>] * num_patches  <span class="comment"># Can attend to images</span>
+    
+    <span class="comment"># 3b. Embed language tokens</span>
+    lang_emb = <span class="keyword">self</span>.vlm_with_expert.embed_language_tokens(lang_tokens)  <span class="comment"># (B, seq_len, hidden_dim)</span>
+    lang_emb = lang_emb * sqrt(hidden_dim)
+    embs.append(lang_emb)
+    att_masks += [<span class="number">0</span>] * num_lang_tokens
+    
+    <span class="comment"># 3c. Embed state with linear projection (STATE IS IN PREFIX!)</span>
+    state_emb = <span class="keyword">self</span>.state_proj(state)  <span class="comment"># Linear(32, hidden_dim) → (B, 1, hidden_dim)</span>
+    embs.append(state_emb)
+    att_masks += [<span class="number">1</span>]  <span class="comment"># State/actions don't attend to img/lang (causal masking)</span>
+    
+    <span class="comment"># 3d. Concatenate all prefix embeddings</span>
+    prefix_embs = torch.cat(embs, dim=<span class="number">1</span>)  <span class="comment"># (B, prefix_len, hidden_dim)</span>
+    <span class="comment"># PREFIX = [img_embs, lang_embs, state_emb]</span>
+    
+    <span class="keyword">return</span> prefix_embs, pad_masks, att_masks</code></pre>
+
+        <h5>Step 3b: Embed Suffix (Actions + Timestep - NO State)</h5>
+        <div class="info-box">
+            <strong>📍 SmolVLA Suffix:</strong> The suffix contains only <code>noisy_actions + timestep</code>. State is NOT included in the suffix (unlike Pi0).
+        </div>
+        <pre><code><span class="keyword">def</span> <span class="function">embed_suffix</span>(<span class="keyword">self</span>, noisy_actions, timestep):
+    <span class="comment"># Note: NO state parameter in embed_suffix for SmolVLA</span>
+    <span class="comment"># Fuse timestep + action information using an MLP</span>
+    action_emb = <span class="keyword">self</span>.action_in_proj(noisy_actions)
+    time_emb = create_sinusoidal_pos_embedding(timestep, hidden_dim, ...)
+    action_time_emb = MLP([action_emb, time_emb])
+    <span class="comment"># SUFFIX = [action_time_emb] (no state!)</span>
+    <span class="keyword">return</span> action_time_emb</code></pre>
+
+        <h5>Step 4: Flow Matching Forward Pass</h5>
+        <pre><code><span class="keyword">def</span> <span class="function">forward</span>(<span class="keyword">self</span>, batch, noise=<span class="keyword">None</span>, time=<span class="keyword">None</span>):
+    <span class="comment"># Prepare inputs</span>
+    images, img_masks = <span class="keyword">self</span>.prepare_images(batch)
+    state = <span class="keyword">self</span>.prepare_state(batch)
+    actions = <span class="keyword">self</span>.prepare_action(batch)  <span class="comment"># (B, chunk_size, max_action_dim)</span>
+    lang_tokens = batch[<span class="string">"observation.language_tokens"</span>]
+    
+    <span class="comment"># Sample noise and time for flow matching</span>
+    <span class="keyword">if</span> noise <span class="keyword">is None</span>:
+        noise = <span class="keyword">self</span>.sample_noise(actions.shape, actions.device)  <span class="comment"># N(0, 1)</span>
+    <span class="keyword">if</span> time <span class="keyword">is None</span>:
+        time = <span class="keyword">self</span>.sample_time(batch_size, device)  <span class="comment"># Beta distribution</span>
+    
+    <span class="comment"># Flow matching interpolation: x_t = t * noise + (1-t) * actions</span>
+    time_expanded = time[:, <span class="keyword">None</span>, <span class="keyword">None</span>]  <span class="comment"># (B, 1, 1)</span>
+    x_t = time_expanded * noise + (<span class="number">1</span> - time_expanded) * actions  <span class="comment"># Noisy actions</span>
+    u_t = noise - actions  <span class="comment"># Target velocity field</span>
+    
+    <span class="comment"># Embed prefix and suffix</span>
+    prefix_embs, prefix_masks, prefix_att = <span class="keyword">self</span>.embed_prefix(images, img_masks, lang_tokens, lang_masks, state)
+    suffix_embs, suffix_masks, suffix_att = <span class="keyword">self</span>.embed_suffix(x_t, time)
+    
+    <span class="comment"># Forward through VLM + Expert</span>
+    pred_velocity = <span class="keyword">self</span>.vlm_with_expert(prefix_embs, suffix_embs, ...)
+    
+    <span class="comment"># Compute loss: MSE between predicted and target velocity</span>
+    loss = F.mse_loss(pred_velocity, u_t)  <span class="comment"># Flow matching loss</span>
+    
+    <span class="keyword">return</span> loss, loss_dict</code></pre>
+
+        <div class="key-concept">
+            <h4>🔑 Key Concept: Flow Matching</h4>
+            <p>Flow Matching is a generative technique that learns to map noise to data by predicting velocity fields:</p>
+            <ul>
+                <li><strong>Interpolation:</strong> <code>x_t = t × noise + (1-t) × action</code> (t ∈ [0, 1])</li>
+                <li><strong>Target velocity:</strong> <code>u_t = noise - action</code> (straight line from action to noise)</li>
+                <li><strong>Training:</strong> Network predicts <code>v_θ(x_t, t)</code>, minimize <code>||v_θ - u_t||²</code></li>
+                <li><strong>Inference:</strong> Integrate from noise using Euler: <code>x_{t+dt} = x_t + dt × v_θ(x_t, t)</code></li>
+            </ul>
+        </div>
+
+        <h4>SmolVLA Preprocessing Pipeline</h4>
+        <pre><code><span class="comment"># From processor_smolvla.py</span>
+input_steps = [
+    RenameObservationsProcessorStep(rename_map={}),
+    AddBatchDimensionProcessorStep(),
+    SmolVLANewLineProcessor(),  <span class="comment"># Ensure task ends with \n</span>
+    TokenizerProcessorStep(
+        tokenizer_name=<span class="string">"HuggingFaceTB/SmolVLM2-500M-Video-Instruct"</span>,
+        max_length=<span class="number">48</span>,
+        padding=<span class="string">"max_length"</span>,
+    ),
+    DeviceProcessorStep(device=<span class="string">"cuda"</span>),
+    NormalizerProcessorStep(
+        features={**input_features, **output_features},
+        norm_map={<span class="string">"STATE"</span>: <span class="string">"mean_std"</span>, <span class="string">"ACTION"</span>: <span class="string">"mean_std"</span>, <span class="string">"VISUAL"</span>: <span class="string">"identity"</span>},
+        stats=dataset_stats,
+    ),
+]</code></pre>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- SECTION 5: Pi0 -->
+    <!-- ============================================ -->
+    <h2 id="pi0">🥧 5. Pi0: PaliGemma + Expert Model</h2>
+
+    <div class="model-section">
+        <div class="model-header">
+            <span class="model-icon">🎯</span>
+            <div>
+                <h3 style="margin: 0; color: var(--accent-orange);">Pi0 Architecture</h3>
+                <p style="margin: 5px 0 0 0; color: var(--text-secondary);">PaliGemma (SigLIP + Gemma) backbone with action expert</p>
+            </div>
+        </div>
+
+        <div class="architecture-box">
+            <div class="arch-diagram">
+                <!-- Input Layer -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box blue">
+                        <div class="arch-box-title">Images</div>
+                        <div class="arch-box-shape">(B, num_cams, C, H, W)</div>
+                        <div class="arch-box-desc">224×224</div>
+                    </div>
+                    <div class="arch-box green">
+                        <div class="arch-box-title">Language</div>
+                        <div class="arch-box-shape">(B, seq_len)</div>
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Encoding Layer -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box blue">
+                        <div class="arch-box-title">SigLIP Vision Tower</div>
+                        <div class="arch-box-desc">Extract visual features</div>
+                    </div>
+                    <div class="arch-box green">
+                        <div class="arch-box-title">PaliGemma Tokenizer</div>
+                        <div class="arch-box-desc">Tokenize language</div>
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Projection Layer -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box blue">
+                        <div class="arch-box-title">Multi-modal Projector</div>
+                        <div class="arch-box-desc">Connect vision to language</div>
+                    </div>
+                    <div class="arch-box green">
+                        <div class="arch-box-title">Gemma LLM Embedding</div>
+                        <div class="arch-box-desc">Language embeddings</div>
+                    </div>
+                </div>
+
+                <!-- Merge Arrow -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-merge">
+                        <div class="arch-merge-line"></div>
+                        <div class="arch-arrow">↓</div>
+                    </div>
+                </div>
+
+                <!-- Prefix Section -->
+                <div class="arch-section">
+                    <div class="arch-section-title">PREFIX: [img₁, img₂, ..., lang₁, lang₂, ...]</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- PaliGemma Language Model -->
+                <div class="arch-box blue" style="max-width: 100%;">
+                    <div class="arch-box-title">PaliGemma Language Model (Frozen)</div>
+                    <div class="arch-box-desc">• Processes prefix embeddings</div>
+                    <div class="arch-box-desc">• Outputs hidden states for action expert</div>
+                </div>
+
+                <!-- Arrow Down with branches -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Suffix Inputs -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">State Projection</div>
+                        <div class="arch-box-desc">Linear(max_state_dim → hidden)</div>
+                    </div>
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">Noisy Actions</div>
+                    </div>
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">Timestep Embedding</div>
+                    </div>
+                </div>
+
+                <!-- Merge Arrow -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-merge">
+                        <div class="arch-merge-line"></div>
+                        <div class="arch-arrow">↓</div>
+                    </div>
+                </div>
+
+                <!-- Suffix Section -->
+                <div class="arch-section">
+                    <div class="arch-section-title">SUFFIX: [state_emb, noisy_act₁, ..., noisy_actₙ]</div>
+                    <div style="margin-top: 8px; font-size: 0.85rem; color: var(--text-secondary); text-align: center;">
+                        Note: Pi0 uses robot state via state_proj layer
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Gemma Expert -->
+                <div class="arch-box orange" style="max-width: 100%;">
+                    <div class="arch-box-title">Gemma Expert (Trainable)</div>
+                    <div class="arch-box-desc">• Attends to both prefix (VLM) and suffix (state/actions)</div>
+                    <div class="arch-box-desc">• Joint attention mechanism</div>
+                    <div class="arch-box-desc">• Predicts velocity for flow matching</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Output -->
+                <div class="arch-box green" style="max-width: 100%;">
+                    <div class="arch-box-title">Predicted Action Chunk</div>
+                    <div class="arch-box-shape">Shape: (B, chunk_size, action_dim)</div>
+                </div>
+            </div>
+        </div>
+
+        <h4>Key Differences from SmolVLA</h4>
+        <ul>
+            <li><strong>VLM Backbone:</strong> PaliGemma (Gemma 2B + SigLIP) vs SmolVLM2</li>
+            <li><strong>Image Resolution:</strong> 224×224 (default) vs 512×512</li>
+            <li><strong>Expert Architecture:</strong> Gemma 300M decoder vs lightweight expert</li>
+            <li><strong>Joint Attention:</strong> Expert attends to both VLM output and its own tokens</li>
+            <li><strong>Robot State Position:</strong> Pi0 embeds state in <strong>SUFFIX</strong>; SmolVLA embeds state in <strong>PREFIX</strong></li>
+        </ul>
+
+        <div class="warning-box">
+            <strong>⚠️ Critical: State Handling Across Models</strong>
+            <ul style="margin: 10px 0 0 20px;">
+                <li><strong>SmolVLA:</strong> State embedded via <code>state_proj</code> in <strong>PREFIX</strong>: <code>[images, language, state_emb]</code></li>
+                <li><strong>Pi0:</strong> State embedded via <code>state_proj</code> in <strong>SUFFIX</strong>: <code>[state_emb, noisy_actions+timestep]</code></li>
+                <li><strong>Pi0.5:</strong> State is <strong>discretized into 256 bins and tokenized into the language prompt</strong> as text: <code>"Task: {task}, State: 128 130 127...;\nAction: "</code>. No separate state embedding layer. Uses AdaRMS for timestep conditioning.</li>
+            </ul>
+        </div>
+
+        <h4>Pi0 Forward Pass</h4>
+        <pre><code><span class="keyword">def</span> <span class="function">forward</span>(<span class="keyword">self</span>, images, img_masks, lang_tokens, lang_masks, state, actions, noise=<span class="keyword">None</span>, time=<span class="keyword">None</span>):
+    <span class="comment"># Sample noise and time</span>
+    <span class="keyword">if</span> noise <span class="keyword">is None</span>:
+        noise = <span class="keyword">self</span>.sample_noise(actions.shape, actions.device)
+    <span class="keyword">if</span> time <span class="keyword">is None</span>:
+        time = <span class="keyword">self</span>.sample_time(batch_size, device)
+    
+    <span class="comment"># Flow matching interpolation</span>
+    time_expanded = time[:, <span class="keyword">None</span>, <span class="keyword">None</span>]
+    x_t = time_expanded * noise + (<span class="number">1</span> - time_expanded) * actions
+    u_t = noise - actions
+    
+    <span class="comment"># Embed prefix (images + language)</span>
+    prefix_embs, prefix_pad_masks, prefix_att_masks = <span class="keyword">self</span>.embed_prefix(
+        images, img_masks, lang_tokens, lang_masks
+    )
+    
+    <span class="comment"># Embed suffix (state + noisy actions + timestep)</span>
+    <span class="comment"># Note: Pi0 includes state, but Pi0.5 does NOT use state</span>
+    <span class="comment"># Pi0: embed_suffix(state, x_t, time) - includes state</span>
+    <span class="comment"># Pi0.5: embed_suffix(x_t, time) - NO state parameter</span>
+    suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = <span class="keyword">self</span>.embed_suffix(
+        state, x_t, time
+    )
+    
+    <span class="comment"># Combine prefix and suffix</span>
+    pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=<span class="number">1</span>)
+    att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=<span class="number">1</span>)
+    
+    <span class="comment"># Create 2D attention mask</span>
+    att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+    
+    <span class="comment"># Joint forward through PaliGemma + Expert</span>
+    prefix_output, suffix_output = <span class="keyword">self</span>.paligemma_with_expert(
+        inputs_embeds=[prefix_embs, suffix_embs],
+        attention_mask=att_2d_masks,
+        ...
+    )
+    
+    <span class="comment"># Project to action space</span>
+    pred_velocity = <span class="keyword">self</span>.action_out_proj(suffix_output[:, -chunk_size:])
+    
+    <span class="comment"># Flow matching loss</span>
+    loss = F.mse_loss(pred_velocity, u_t)
+    
+    <span class="keyword">return</span> loss</code></pre>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- SECTION 6: Pi0.5 -->
+    <!-- ============================================ -->
+    <h2 id="pi05">🚀 6. Pi0.5: No State, AdaRMS Conditioning</h2>
+
+    <div class="model-section">
+        <div class="model-header">
+            <span class="model-icon">⚡</span>
+            <div>
+                <h3 style="margin: 0; color: var(--accent-purple);">Pi0.5 Architecture</h3>
+                <p style="margin: 5px 0 0 0; color: var(--text-secondary);">PaliGemma backbone with AdaRMS conditioning, NO robot state</p>
+            </div>
+        </div>
+
+        <div class="architecture-box">
+            <div class="arch-diagram">
+                <!-- Input Layer -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box blue">
+                        <div class="arch-box-title">Images</div>
+                        <div class="arch-box-shape">(B, num_cams, C, H, W)</div>
+                        <div class="arch-box-desc">224×224</div>
+                    </div>
+                    <div class="arch-box green">
+                        <div class="arch-box-title">Language</div>
+                        <div class="arch-box-shape">(B, seq_len)</div>
+                        <div class="arch-box-desc">200 tokens (vs 48 in Pi0)</div>
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Encoding Layer -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box blue">
+                        <div class="arch-box-title">SigLIP Vision Tower</div>
+                        <div class="arch-box-desc">Extract visual features</div>
+                    </div>
+                    <div class="arch-box green">
+                        <div class="arch-box-title">PaliGemma Tokenizer</div>
+                        <div class="arch-box-desc">Tokenize language</div>
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Projection Layer -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box blue">
+                        <div class="arch-box-title">Multi-modal Projector</div>
+                        <div class="arch-box-desc">Connect vision to language</div>
+                    </div>
+                    <div class="arch-box green">
+                        <div class="arch-box-title">Gemma LLM Embedding</div>
+                        <div class="arch-box-desc">Language embeddings</div>
+                    </div>
+                </div>
+
+                <!-- Merge Arrow -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-merge">
+                        <div class="arch-merge-line"></div>
+                        <div class="arch-arrow">↓</div>
+                    </div>
+                </div>
+
+                <!-- Prefix Section -->
+                <div class="arch-section">
+                    <div class="arch-section-title">PREFIX: [img₁, img₂, ..., lang₁, lang₂, ...]</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- PaliGemma Language Model -->
+                <div class="arch-box blue" style="max-width: 100%;">
+                    <div class="arch-box-title">PaliGemma Language Model (Frozen)</div>
+                    <div class="arch-box-desc">• Processes prefix embeddings</div>
+                    <div class="arch-box-desc">• Outputs hidden states for action expert</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Suffix Inputs (NO STATE) -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">Noisy Actions</div>
+                    </div>
+                    <div class="arch-box purple">
+                        <div class="arch-box-title">Timestep Embedding</div>
+                        <div class="arch-box-desc">→ AdaRMS conditioning</div>
+                    </div>
+                </div>
+
+                <!-- Merge Arrow -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-merge">
+                        <div class="arch-merge-line"></div>
+                        <div class="arch-arrow">↓</div>
+                    </div>
+                </div>
+
+                <!-- Suffix Section -->
+                <div class="arch-section">
+                    <div class="arch-section-title">SUFFIX: [noisy_act₁, ..., noisy_actₙ]</div>
+                    <div style="margin-top: 8px; font-size: 0.85rem; color: var(--accent-red); text-align: center; font-weight: 600;">
+                        ⚠️ NO Robot State - Uses AdaRMS conditioning instead
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Gemma Expert with AdaRMS -->
+                <div class="arch-box purple" style="max-width: 100%;">
+                    <div class="arch-box-title">Gemma Expert (Trainable) with AdaRMS</div>
+                    <div class="arch-box-desc">• Attends to both prefix (VLM) and suffix (actions)</div>
+                    <div class="arch-box-desc">• AdaRMS conditioning via timestep embedding</div>
+                    <div class="arch-box-desc">• Predicts velocity for flow matching</div>
+                    <div class="arch-box-desc">• Smaller expert: gemma_300m (vs gemma_2b in Pi0)</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Output -->
+                <div class="arch-box green" style="max-width: 100%;">
+                    <div class="arch-box-title">Predicted Action Chunk</div>
+                    <div class="arch-box-shape">Shape: (B, chunk_size, action_dim)</div>
+                </div>
+            </div>
+        </div>
+
+        <h4>Key Differences from Pi0</h4>
+        <ul>
+            <li><strong>Robot State:</strong> Pi0.5 <strong>discretizes state into 256 bins and puts it in the language prompt</strong> as text: <code>"Task: {task}, State: 128 130 127...;\nAction: "</code>. No separate <code>state_proj</code> embedding layer.</li>
+            <li><strong>AdaRMS Conditioning:</strong> Uses Adaptive RMSNorm (AdaRMS) for timestep conditioning instead of concatenating timestep with action embeddings</li>
+            <li><strong>Tokenizer Length:</strong> 200 tokens (vs 48 in Pi0) to accommodate the discretized state string in the prompt</li>
+            <li><strong>Expert Size:</strong> Same as Pi0 (gemma_300m default for both)</li>
+            <li><strong>Normalization:</strong> Uses QUANTILES normalization for state/action (vs MEAN_STD in Pi0) - state is normalized to [-1, 1] before discretization</li>
+            <li><strong>Time Conditioning:</strong> Uses <code>time_mlp_*</code> for AdaRMS conditioning (vs <code>action_time_mlp_*</code> in Pi0)</li>
+        </ul>
+        
+        <h4>🔑 Pi0.5 State Discretization in Language Prompt</h4>
+        <pre><code><span class="comment"># From Pi05PrepareStateTokenizerProcessorStep</span>
+<span class="comment"># 1. State is normalized to [-1, 1] by NormalizerProcessorStep (QUANTILES mode)</span>
+<span class="comment"># 2. Discretize into 256 bins</span>
+discretized_states = np.digitize(state_np, bins=np.linspace(-<span class="number">1</span>, <span class="number">1</span>, <span class="number">256</span> + <span class="number">1</span>)[:-<span class="number">1</span>]) - <span class="number">1</span>
+<span class="comment"># 3. Convert to string and append to prompt</span>
+state_str = <span class="string">" "</span>.join(map(str, discretized_states[i]))
+full_prompt = f<span class="string">"Task: {cleaned_text}, State: {state_str};\nAction: "</span>
+<span class="comment"># Example: "Task: pick up the cube, State: 128 130 127 125 129 128;\nAction: "</span></code></pre>
+
+        <h4>Pi0.5 Forward Pass</h4>
+        <pre><code><span class="keyword">def</span> <span class="function">forward</span>(<span class="keyword">self</span>, images, img_masks, tokens, masks, actions, noise=<span class="keyword">None</span>, time=<span class="keyword">None</span>):
+    <span class="comment"># Note: NO state parameter!</span>
+    <span class="comment"># Sample noise and time</span>
+    <span class="keyword">if</span> noise <span class="keyword">is None</span>:
+        noise = <span class="keyword">self</span>.sample_noise(actions.shape, actions.device)
+    <span class="keyword">if</span> time <span class="keyword">is None</span>:
+        time = <span class="keyword">self</span>.sample_time(batch_size, device)
+    
+    <span class="comment"># Flow matching interpolation</span>
+    time_expanded = time[:, <span class="keyword">None</span>, <span class="keyword">None</span>]
+    x_t = time_expanded * noise + (<span class="number">1</span> - time_expanded) * actions
+    u_t = noise - actions
+    
+    <span class="comment"># Embed prefix (images + language)</span>
+    prefix_embs, prefix_pad_masks, prefix_att_masks = <span class="keyword">self</span>.embed_prefix(
+        images, img_masks, tokens, masks
+    )
+    
+    <span class="comment"># Embed suffix (NO state - only noisy actions + timestep)</span>
+    suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = <span class="keyword">self</span>.embed_suffix(
+        x_t, time  <span class="comment"># NO state parameter!</span>
+    )
+    
+    <span class="comment"># Combine prefix and suffix</span>
+    pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=<span class="number">1</span>)
+    att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=<span class="number">1</span>)
+    
+    <span class="comment"># Joint forward through PaliGemma + Expert with AdaRMS</span>
+    prefix_output, suffix_output = <span class="keyword">self</span>.paligemma_with_expert(
+        inputs_embeds=[prefix_embs, suffix_embs],
+        attention_mask=att_2d_masks,
+        adarms_cond=[<span class="keyword">None</span>, adarms_cond],  <span class="comment"># AdaRMS conditioning</span>
+        ...
+    )
+    
+    <span class="comment"># Project to action space</span>
+    pred_velocity = <span class="keyword">self</span>.action_out_proj(suffix_output[:, -chunk_size:])
+    
+    <span class="comment"># Flow matching loss</span>
+    loss = F.mse_loss(pred_velocity, u_t)
+    
+    <span class="keyword">return</span> loss</code></pre>
+
+        <h4>Pi0.5 Embed Suffix (No State)</h4>
+        <pre><code><span class="keyword">def</span> <span class="function">embed_suffix</span>(<span class="keyword">self</span>, noisy_actions, timestep):
+    <span class="string">"""Embed noisy_actions, timestep - NO state parameter!"""</span>
+    embs = []
+    
+    <span class="comment"># Embed timestep using sine-cosine positional encoding</span>
+    time_emb = create_sinusoidal_pos_embedding(timestep, ...)
+    
+    <span class="comment"># Process timestep through MLP for AdaRMS conditioning</span>
+    time_emb = <span class="keyword">self</span>.time_mlp_in(time_emb)
+    time_emb = F.silu(time_emb)
+    time_emb = <span class="keyword">self</span>.time_mlp_out(time_emb)
+    time_emb = F.silu(time_emb)
+    
+    <span class="comment"># Project noisy actions</span>
+    action_emb = <span class="keyword">self</span>.action_in_proj(noisy_actions)
+    
+    <span class="comment"># AdaRMS conditioning (not concatenated with actions)</span>
+    adarms_cond = time_emb
+    
+    embs.append(action_emb)
+    
+    <span class="keyword">return</span> embs, pad_masks, att_masks, adarms_cond</code></pre>
+
+        <div class="key-concept">
+            <h4>🔑 Key Concept: AdaRMS Conditioning</h4>
+            <p>Pi0.5 uses Adaptive RMSNorm (AdaRMS) for timestep conditioning:</p>
+            <ul>
+                <li><strong>Pi0:</strong> Concatenates timestep embedding with action embeddings: <code>[action_emb, time_emb] → MLP</code></li>
+                <li><strong>Pi0.5:</strong> Uses timestep embedding as AdaRMS condition: <code>adarms_cond = time_emb</code>, passed separately to expert layers</li>
+                <li><strong>Benefit:</strong> More efficient conditioning, allows model to adapt normalization based on timestep</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- SECTION 7: Pi0.5-Fast -->
+    <!-- ============================================ -->
+    <h2 id="pi05-fast">⚡ 7. Pi0.5-Fast: Optimized for Speed</h2>
+
+    <div class="model-section">
+        <div class="model-header">
+            <span class="model-icon">🏃</span>
+            <div>
+                <h3 style="margin: 0; color: var(--accent-yellow);">Pi0.5-Fast Architecture</h3>
+                <p style="margin: 5px 0 0 0; color: var(--text-secondary);">Pi0.5 optimized for faster inference with reduced inference steps</p>
+            </div>
+        </div>
+
+        <div class="info-box">
+            <strong>📌 Pi0.5-Fast Configuration</strong>
+            <p>Pi0.5-Fast is the same architecture as Pi0.5, but optimized for faster inference:</p>
+            <ul>
+                <li><strong>Fewer Inference Steps:</strong> Uses <code>num_inference_steps=5</code> (vs 10 in standard Pi0.5)</li>
+                <li><strong>Same Architecture:</strong> Identical to Pi0.5 (no state, AdaRMS conditioning)</li>
+                <li><strong>Trade-off:</strong> Slightly lower action quality for ~2x faster inference</li>
+                <li><strong>Use Case:</strong> Real-time robot control where speed is critical</li>
+            </ul>
+        </div>
+
+        <h4>Configuration Differences</h4>
+        <table class="comparison-table">
+            <thead>
+                <tr>
+                    <th>Parameter</th>
+                    <th>Pi0.5</th>
+                    <th>Pi0.5-Fast</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>num_inference_steps</code></td>
+                    <td>10</td>
+                    <td>5</td>
+                </tr>
+                <tr>
+                    <td><code>action_expert_variant</code></td>
+                    <td>gemma_300m</td>
+                    <td>gemma_300m</td>
+                </tr>
+                <tr>
+                    <td><code>paligemma_variant</code></td>
+                    <td>gemma_2b</td>
+                    <td>gemma_2b</td>
+                </tr>
+                <tr>
+                    <td><code>chunk_size</code></td>
+                    <td>50</td>
+                    <td>50</td>
+                </tr>
+                <tr>
+                    <td><strong>Inference Speed</strong></td>
+                    <td>Baseline</td>
+                    <td>~2x faster</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h4>Usage Example</h4>
+        <pre><code><span class="comment"># Standard Pi0.5</span>
+lerobot-train \
+    --policy.path=lerobot/pi05_base \
+    --policy.num_inference_steps=10 \
+    ...
+
+<span class="comment"># Pi0.5-Fast (faster inference)</span>
+lerobot-train \
+    --policy.path=lerobot/pi05_base \
+    --policy.num_inference_steps=5 \
+    ...</code></pre>
+
+        <div class="warning-box">
+            <strong>⚠️ Note on Pi0.5-Fast</strong>
+            <p>Pi0.5-Fast is not a separate model variant, but rather Pi0.5 configured with fewer inference steps. The architecture is identical to Pi0.5. You can achieve the same result by setting <code>--policy.num_inference_steps=5</code> when using Pi0.5.</p>
+        </div>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- SECTION 8: ACT -->
+    <!-- ============================================ -->
+    <h2 id="act">🎬 8. ACT: Action Chunking Transformer</h2>
+
+    <div class="model-section">
+        <div class="model-header">
+            <span class="model-icon">⚡</span>
+            <div>
+                <h3 style="margin: 0; color: var(--accent-green);">ACT Architecture</h3>
+                <p style="margin: 5px 0 0 0; color: var(--text-secondary);">Encoder-Decoder Transformer with optional VAE</p>
+            </div>
+        </div>
+
+        <div class="architecture-box">
+            <div class="arch-diagram">
+                <!-- Training Mode Label -->
+                <div class="arch-section" style="border-color: var(--accent-purple); margin-bottom: 20px;">
+                    <div class="arch-section-title">Training Mode (with VAE)</div>
+                </div>
+
+                <!-- Input Layer -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">Actions</div>
+                        <div class="arch-box-shape">(B, chunk_size, action_dim)</div>
+                    </div>
+                    <div class="arch-box blue">
+                        <div class="arch-box-title">Robot State</div>
+                        <div class="arch-box-shape">(B, state_dim)</div>
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- VAE Encoder -->
+                <div class="arch-box orange" style="max-width: 100%;">
+                    <div class="arch-box-title">VAE Encoder (BERT-style)</div>
+                    <div class="arch-box-desc">Input: [CLS] + action_embed₁ + ... + action_embedₙ + state</div>
+                    <div class="arch-box-desc">Positional embedding + Self-attention</div>
+                    <div class="arch-box-desc">Output: CLS token → μ, log(σ²)</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Reparameterization -->
+                <div class="arch-box blue" style="max-width: 100%;">
+                    <div class="arch-box-title">Reparameterization</div>
+                    <div class="arch-box-desc">z = μ + σ × ε, ε ~ N(0,1)</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                    <div style="margin-left: 10px; color: var(--text-secondary); font-size: 0.85rem;">Latent z</div>
+                </div>
+
+                <!-- Encoder Inputs -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box green">
+                        <div class="arch-box-title">Latent Projection</div>
+                        <div class="arch-box-desc">z → tokens</div>
+                    </div>
+                    <div class="arch-box blue">
+                        <div class="arch-box-title">State Projection</div>
+                        <div class="arch-box-desc">state → tokens</div>
+                    </div>
+                    <div class="arch-box purple">
+                        <div class="arch-box-title">Camera Features</div>
+                        <div class="arch-box-desc">ResNet18 → Flatten → Project</div>
+                    </div>
+                </div>
+
+                <!-- Merge Arrow -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-merge">
+                        <div class="arch-merge-line"></div>
+                        <div class="arch-arrow">↓</div>
+                    </div>
+                </div>
+
+                <!-- Transformer Encoder -->
+                <div class="arch-box green" style="max-width: 100%;">
+                    <div class="arch-box-title">TRANSFORMER ENCODER</div>
+                    <div class="arch-box-desc">Input tokens: [latent_proj(z), state_proj(state), cam_features]</div>
+                    <div class="arch-box-desc">Encoder attention layers</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                    <div style="margin-left: 10px; color: var(--text-secondary); font-size: 0.85rem;">Encoder output</div>
+                </div>
+
+                <!-- Transformer Decoder -->
+                <div class="arch-box blue" style="max-width: 100%;">
+                    <div class="arch-box-title">TRANSFORMER DECODER</div>
+                    <div class="arch-box-desc">Query tokens: [chunk_size] learnable position embeddings</div>
+                    <div class="arch-box-desc">Cross-attention to encoder output</div>
+                    <div class="arch-box-desc">Self-attention between query tokens</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Action Head -->
+                <div class="arch-box orange" style="max-width: 100%;">
+                    <div class="arch-box-title">Action Head (Linear)</div>
+                    <div class="arch-box-shape">Input: (B, chunk_size, dim_model)</div>
+                    <div class="arch-box-shape">Output: (B, chunk_size, action_dim)</div>
+                </div>
+
+                <!-- Loss -->
+                <div class="arch-section" style="border-color: var(--accent-pink); margin-top: 20px;">
+                    <div class="arch-section-title">Loss = L1(predicted, target) + β × KL(q(z|x) || p(z))</div>
+                </div>
+            </div>
+        </div>
+
+        <h4>ACT Key Features</h4>
+        <ul>
+            <li><strong>Vision Backbone:</strong> ResNet18 (pretrained on ImageNet) for image encoding</li>
+            <li><strong>VAE Objective:</strong> Optional variational objective for diverse action generation</li>
+            <li><strong>Action Chunking:</strong> Predicts entire action sequence (100 steps) at once</li>
+            <li><strong>Temporal Ensembling:</strong> Optional exponential weighted averaging of predictions</li>
+        </ul>
+
+        <h4>ACT Forward Pass</h4>
+        <pre><code><span class="keyword">def</span> <span class="function">forward</span>(<span class="keyword">self</span>, batch):
+    batch_size = batch[<span class="string">"observation.state"</span>].shape[<span class="number">0</span>]
+    
+    <span class="comment"># 1. VAE Encoder (if use_vae=True)</span>
+    <span class="keyword">if</span> <span class="keyword">self</span>.config.use_vae:
+        <span class="comment"># Create VAE input: [CLS, action_embed, state_embed]</span>
+        cls_token = <span class="keyword">self</span>.cls_embed.weight.unsqueeze(<span class="number">1</span>).repeat(<span class="number">1</span>, batch_size, <span class="number">1</span>)
+        action_embed = <span class="keyword">self</span>.vae_encoder_action_input_proj(batch[<span class="string">"action"</span>])
+        robot_state_embed = <span class="keyword">self</span>.vae_encoder_robot_state_input_proj(batch[<span class="string">"observation.state"</span>])
+        
+        vae_encoder_input = torch.cat([cls_token, action_embed, robot_state_embed], dim=<span class="number">0</span>)
+        
+        <span class="comment"># Forward through VAE encoder</span>
+        cls_token_out = <span class="keyword">self</span>.vae_encoder(vae_encoder_input)
+        latent_params = <span class="keyword">self</span>.vae_encoder_latent_output_proj(cls_token_out)
+        
+        mu = latent_params[:, :latent_dim]
+        log_sigma_x2 = latent_params[:, latent_dim:]
+        
+        <span class="comment"># Reparameterization trick</span>
+        latent_sample = mu + log_sigma_x2.div(<span class="number">2</span>).exp() * torch.randn_like(mu)
+    <span class="keyword">else</span>:
+        latent_sample = torch.zeros([batch_size, latent_dim])
+    
+    <span class="comment"># 2. Prepare encoder inputs</span>
+    encoder_in_tokens = [<span class="keyword">self</span>.encoder_latent_input_proj(latent_sample)]
+    encoder_in_tokens.append(<span class="keyword">self</span>.encoder_robot_state_input_proj(batch[<span class="string">"observation.state"</span>]))
+    
+    <span class="comment"># 3. Process camera images with ResNet backbone</span>
+    <span class="keyword">for</span> img <span class="keyword">in</span> batch[<span class="string">"observation.images"</span>]:
+        cam_features = <span class="keyword">self</span>.backbone(img)[<span class="string">"feature_map"</span>]  <span class="comment"># (B, 512, H', W')</span>
+        cam_features = <span class="keyword">self</span>.encoder_img_feat_input_proj(cam_features)  <span class="comment"># → (B, dim_model, H', W')</span>
+        cam_features = einops.rearrange(cam_features, <span class="string">"b c h w -> (h w) b c"</span>)  <span class="comment"># Flatten spatial</span>
+        encoder_in_tokens.extend(cam_features)
+    
+    <span class="comment"># 4. Stack and pass through encoder</span>
+    encoder_in_tokens = torch.stack(encoder_in_tokens, axis=<span class="number">0</span>)
+    encoder_out = <span class="keyword">self</span>.encoder(encoder_in_tokens)
+    
+    <span class="comment"># 5. Decoder: query tokens cross-attend to encoder output</span>
+    decoder_in = torch.zeros((chunk_size, batch_size, dim_model))
+    decoder_out = <span class="keyword">self</span>.decoder(decoder_in, encoder_out)
+    
+    <span class="comment"># 6. Project to action space</span>
+    actions = <span class="keyword">self</span>.action_head(decoder_out.transpose(<span class="number">0</span>, <span class="number">1</span>))  <span class="comment"># (B, chunk_size, action_dim)</span>
+    
+    <span class="keyword">return</span> actions, (mu, log_sigma_x2)</code></pre>
+
+        <h4>ACT Loss Computation</h4>
+        <pre><code><span class="comment"># L1 reconstruction loss</span>
+l1_loss = F.l1_loss(batch[<span class="string">"action"</span>], actions_hat, reduction=<span class="string">"none"</span>)
+l1_loss = (l1_loss * ~batch[<span class="string">"action_is_pad"</span>].unsqueeze(-<span class="number">1</span>)).mean()
+
+<span class="comment"># KL divergence (if VAE)</span>
+<span class="keyword">if</span> <span class="keyword">self</span>.config.use_vae:
+    mean_kld = (-<span class="number">0.5</span> * (<span class="number">1</span> + log_sigma_x2 - mu.pow(<span class="number">2</span>) - log_sigma_x2.exp())).sum(-<span class="number">1</span>).mean()
+    loss = l1_loss + <span class="keyword">self</span>.config.kl_weight * mean_kld
+<span class="keyword">else</span>:
+    loss = l1_loss</code></pre>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- SECTION 9: Groot -->
+    <!-- ============================================ -->
+    <h2 id="groot">🤖 9. Groot: NVIDIA GR00T Integration</h2>
+
+    <div class="model-section">
+        <div class="model-header">
+            <span class="model-icon">🌳</span>
+            <div>
+                <h3 style="margin: 0; color: var(--accent-yellow);">Groot Architecture</h3>
+                <p style="margin: 5px 0 0 0; color: var(--text-secondary);">NVIDIA Isaac GR00T N1.5 with Eagle Vision Encoder</p>
+            </div>
+        </div>
+
+        <div class="architecture-box">
+            <div class="arch-diagram">
+                <!-- Input Layer -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box blue">
+                        <div class="arch-box-title">Video Frames</div>
+                        <div class="arch-box-shape">(B, T, V, H, W, C)</div>
+                    </div>
+                    <div class="arch-box green">
+                        <div class="arch-box-title">Language Task</div>
+                        <div class="arch-box-shape">(B,)</div>
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Eagle Processor -->
+                <div class="arch-box blue" style="max-width: 100%;">
+                    <div class="arch-box-title">Eagle Vision-Language Processor</div>
+                    <div class="arch-box-desc">• Dynamic tiling for multi-view video</div>
+                    <div class="arch-box-desc">• Chat template formatting</div>
+                    <div class="arch-box-desc">• Returns: eagle_pixel_values, eagle_input_ids, etc.</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Eagle VL Model -->
+                <div class="arch-box green" style="max-width: 100%;">
+                    <div class="arch-box-title">Eagle Vision-Language Model</div>
+                    <div class="arch-box-desc">• Processes video frames + language</div>
+                    <div class="arch-box-desc">• Outputs: vision-language embeddings</div>
+                </div>
+
+                <!-- Arrow Down with branches -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Encoders -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">State Encoder</div>
+                    </div>
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">Action Encoder</div>
+                    </div>
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">Embodiment ID</div>
+                    </div>
+                </div>
+
+                <!-- Merge Arrow -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-merge">
+                        <div class="arch-merge-line"></div>
+                        <div class="arch-arrow">↓</div>
+                    </div>
+                </div>
+
+                <!-- Flow Matching Action Head -->
+                <div class="arch-box orange" style="max-width: 100%;">
+                    <div class="arch-box-title">Flow Matching Action Head</div>
+                    <div class="arch-box-desc">• DiT (Diffusion Transformer) architecture</div>
+                    <div class="arch-box-desc">• Cross-attention to VL embeddings</div>
+                    <div class="arch-box-desc">• Predicts action velocity field</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Action Decoder -->
+                <div class="arch-box green" style="max-width: 100%;">
+                    <div class="arch-box-title">Action Decoder (embodiment-specific)</div>
+                    <div class="arch-box-shape">Output: (B, action_horizon, max_action_dim)</div>
+                </div>
+            </div>
+        </div>
+
+        <h4>Groot Preprocessing Pipeline</h4>
+        <pre><code><span class="comment"># From processor_groot.py - unique multi-step preprocessing</span>
+input_steps = [
+    <span class="comment"># 1. Rename keys</span>
+    RenameObservationsProcessorStep(rename_map={}),
+    
+    <span class="comment"># 2. Add batch dimension</span>
+    AddBatchDimensionProcessorStep(),
+    
+    <span class="comment"># 3. Pack inputs: state, action, language, embodiment</span>
+    GrootPackInputsStep(
+        state_horizon=<span class="number">1</span>,
+        action_horizon=<span class="number">16</span>,
+        max_state_dim=<span class="number">64</span>,
+        max_action_dim=<span class="number">32</span>,
+        embodiment_tag=<span class="string">"new_embodiment"</span>,
+        normalize_min_max=<span class="keyword">True</span>,  <span class="comment"># Min-max normalize state/action</span>
+    ),
+    
+    <span class="comment"># 4. Eagle encode: convert images to Eagle format</span>
+    GrootEagleEncodeStep(
+        tokenizer_assets_repo=<span class="string">"nvidia/GR00T-N1.5-3B"</span>,
+    ),
+    
+    <span class="comment"># 5. Collate Eagle content → tensors</span>
+    GrootEagleCollateStep(
+        tokenizer_assets_repo=<span class="string">"nvidia/GR00T-N1.5-3B"</span>,
+    ),
+    
+    <span class="comment"># 6. Move to device</span>
+    DeviceProcessorStep(device=<span class="string">"cuda"</span>),
+]</code></pre>
+
+        <h4>Eagle Encoding Process</h4>
+        <pre><code><span class="keyword">def</span> <span class="function">__call__</span>(<span class="keyword">self</span>, transition):
+    video = obs[<span class="string">"video"</span>]  <span class="comment"># (B, T, V, H, W, C) uint8</span>
+    lang = comp.get(<span class="string">"language"</span>, <span class="string">"Perform the task."</span>)
+    
+    eagle_contents = []
+    <span class="keyword">for</span> b <span class="keyword">in</span> range(bsz):
+        <span class="comment"># Flatten video frames into list of PIL images</span>
+        flat = rearrange(vt, <span class="string">"t v h w c -> (t v) h w c"</span>)
+        images = [Image.fromarray(flat[i]) <span class="keyword">for</span> i <span class="keyword">in</span> range(t * v)]
+        
+        <span class="comment"># Format as chat conversation</span>
+        conv = [{
+            <span class="string">"role"</span>: <span class="string">"user"</span>,
+            <span class="string">"content"</span>: [
+                {<span class="string">"type"</span>: <span class="string">"image"</span>, <span class="string">"image"</span>: img} <span class="keyword">for</span> img <span class="keyword">in</span> images
+            ] + [{<span class="string">"type"</span>: <span class="string">"text"</span>, <span class="string">"text"</span>: str([lang])}]
+        }]
+        
+        <span class="comment"># Apply chat template</span>
+        text_list = [<span class="keyword">self</span>.proc.apply_chat_template(conv, tokenize=<span class="keyword">False</span>)]
+        
+        eagle_contents.append({
+            <span class="string">"text_list"</span>: text_list,
+            <span class="string">"image_inputs"</span>: img_inputs,
+        })
+    
+    <span class="keyword">return</span> transition</code></pre>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- SECTION 10: Diffusion -->
+    <!-- ============================================ -->
+    <h2 id="diffusion">🌊 10. Diffusion Policy: Denoising Actions</h2>
+
+    <div class="model-section">
+        <div class="model-header">
+            <span class="model-icon">💨</span>
+            <div>
+                <h3 style="margin: 0; color: var(--accent-blue);">Diffusion Policy Architecture</h3>
+                <p style="margin: 5px 0 0 0; color: var(--text-secondary);">Conditional UNet with DDPM/DDIM noise scheduling</p>
+            </div>
+        </div>
+
+        <div class="architecture-box">
+            <div class="arch-diagram">
+                <!-- Input Layer -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box green">
+                        <div class="arch-box-title">Images</div>
+                        <div class="arch-box-shape">(B, n_obs_steps, num_cams, C, H, W)</div>
+                    </div>
+                    <div class="arch-box blue">
+                        <div class="arch-box-title">State</div>
+                        <div class="arch-box-shape">(B, n_obs_steps, D)</div>
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- ResNet Encoder -->
+                <div class="arch-box green" style="max-width: 100%;">
+                    <div class="arch-box-title">ResNet Encoder (per camera)</div>
+                    <div class="arch-box-desc">Extract image features</div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Global Conditioning -->
+                <div class="arch-box purple" style="max-width: 100%;">
+                    <div class="arch-box-title">Global Conditioning Vector</div>
+                    <div class="arch-box-desc">concat([img_features, state]) → flatten</div>
+                    <div class="arch-box-shape">(B, global_cond_dim)</div>
+                </div>
+
+                <!-- Arrow Down with branches -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Training Inputs -->
+                <div class="arch-row" style="justify-content: space-around;">
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">Noise Sample</div>
+                        <div class="arch-box-desc">ε ~ N(0,1)</div>
+                    </div>
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">Timestep</div>
+                        <div class="arch-box-desc">Random t</div>
+                    </div>
+                    <div class="arch-box orange">
+                        <div class="arch-box-title">Actions</div>
+                        <div class="arch-box-shape">(B, horizon, action_dim)</div>
+                    </div>
+                </div>
+
+                <!-- Merge Arrow -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-merge">
+                        <div class="arch-merge-line"></div>
+                        <div class="arch-arrow">↓</div>
+                    </div>
+                </div>
+
+                <!-- Add Noise -->
+                <div class="arch-section" style="border-color: var(--accent-orange);">
+                    <div class="arch-section-title">TRAINING: Add Noise</div>
+                    <div class="arch-box orange" style="max-width: 100%; margin-top: 10px;">
+                        <div class="arch-box-desc">noisy_trajectory = scheduler.add_noise(actions, ε, timestep)</div>
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Conditional UNet -->
+                <div class="arch-box blue" style="max-width: 100%;">
+                    <div class="arch-box-title">Conditional UNet 1D</div>
+                    <div class="arch-box-desc">Input: noisy_trajectory (B, horizon, action_dim)</div>
+                    <div class="arch-box-desc">Condition: global_cond, timestep</div>
+                    <div style="margin-top: 10px; padding: 10px; background: var(--bg-secondary); border-radius: 4px;">
+                        <div class="arch-box-desc">↓ Down blocks (Conv1d + GroupNorm + Attention)</div>
+                        <div class="arch-box-desc">↓ Mid block (Self-attention)</div>
+                        <div class="arch-box-desc">↓ Up blocks (Conv1d + GroupNorm + Skip connections)</div>
+                        <div class="arch-box-desc">→ Output: predicted_noise or predicted_sample</div>
+                    </div>
+                </div>
+
+                <!-- Arrow Down -->
+                <div class="arch-row" style="justify-content: center;">
+                    <div class="arch-arrow">↓</div>
+                </div>
+
+                <!-- Loss Computation -->
+                <div class="arch-box green" style="max-width: 100%;">
+                    <div class="arch-box-title">Loss Computation</div>
+                    <div class="arch-box-desc">if prediction_type == "epsilon": loss = MSE(predicted, ε)</div>
+                    <div class="arch-box-desc">elif prediction_type == "sample": loss = MSE(predicted, actions)</div>
+                </div>
+
+                <!-- Inference Section -->
+                <div class="arch-section" style="border-color: var(--accent-orange); margin-top: 30px;">
+                    <div class="arch-section-title">INFERENCE: Iterative Denoising</div>
+                    <div style="margin-top: 15px; padding: 15px; background: var(--bg-secondary); border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">
+                        <div style="color: var(--text-primary); margin-bottom: 8px;">sample = randn(B, horizon, action_dim)  # Start from pure noise</div>
+                        <div style="color: var(--text-primary); margin-bottom: 8px;">for t in scheduler.timesteps:  # T → 0</div>
+                        <div style="color: var(--text-secondary); margin-left: 20px; margin-bottom: 4px;">model_output = unet(sample, t, global_cond)</div>
+                        <div style="color: var(--text-secondary); margin-left: 20px; margin-bottom: 8px;">sample = scheduler.step(model_output, t, sample)  # Denoise step</div>
+                        <div style="color: var(--text-primary);">return sample  # Clean action trajectory</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <h4>Diffusion Policy Forward Pass (Training)</h4>
+        <pre><code><span class="keyword">def</span> <span class="function">compute_loss</span>(<span class="keyword">self</span>, batch):
+    <span class="comment"># 1. Prepare global conditioning</span>
+    global_cond = <span class="keyword">self</span>._prepare_global_conditioning(batch)
+    <span class="comment"># global_cond shape: (B, n_obs_steps * (img_feat_dim + state_dim))</span>
+    
+    <span class="comment"># 2. Get target action trajectory</span>
+    trajectory = batch[<span class="string">"action"</span>]  <span class="comment"># (B, horizon, action_dim)</span>
+    
+    <span class="comment"># 3. Sample random noise</span>
+    eps = torch.randn(trajectory.shape, device=trajectory.device)
+    
+    <span class="comment"># 4. Sample random timesteps</span>
+    timesteps = torch.randint(
+        low=<span class="number">0</span>,
+        high=<span class="keyword">self</span>.noise_scheduler.config.num_train_timesteps,
+        size=(trajectory.shape[<span class="number">0</span>],),
+        device=trajectory.device,
+    ).long()
+    
+    <span class="comment"># 5. Add noise to trajectory</span>
+    noisy_trajectory = <span class="keyword">self</span>.noise_scheduler.add_noise(trajectory, eps, timesteps)
+    
+    <span class="comment"># 6. Predict noise (or sample) with UNet</span>
+    pred = <span class="keyword">self</span>.unet(noisy_trajectory, timesteps, global_cond=global_cond)
+    
+    <span class="comment"># 7. Compute loss</span>
+    <span class="keyword">if</span> <span class="keyword">self</span>.config.prediction_type == <span class="string">"epsilon"</span>:
+        target = eps  <span class="comment"># Predict noise</span>
+    <span class="keyword">elif</span> <span class="keyword">self</span>.config.prediction_type == <span class="string">"sample"</span>:
+        target = trajectory  <span class="comment"># Predict clean sample</span>
+    
+    loss = F.mse_loss(pred, target, reduction=<span class="string">"none"</span>)
+    loss = (loss * ~batch[<span class="string">"action_is_pad"</span>].unsqueeze(-<span class="number">1</span>)).mean()
+    
+    <span class="keyword">return</span> loss</code></pre>
+
+        <h4>RGB Encoder (ResNet Backbone)</h4>
+        <pre><code><span class="keyword">class</span> <span class="class">DiffusionRgbEncoder</span>(nn.Module):
+    <span class="keyword">def</span> <span class="function">__init__</span>(<span class="keyword">self</span>, config):
+        <span class="comment"># Load pretrained ResNet</span>
+        backbone_model = getattr(torchvision.models, config.vision_backbone)(
+            weights=config.pretrained_backbone_weights
+        )
+        
+        <span class="comment"># Remove classification head, keep feature extraction layers</span>
+        <span class="keyword">self</span>.backbone = nn.Sequential(*list(backbone_model.children())[:-<span class="number">2</span>])
+        
+        <span class="comment"># Spatial softmax for extracting keypoints</span>
+        <span class="keyword">self</span>.pool = SpatialSoftmax(...)
+        
+        <span class="comment"># Linear projection to feature dimension</span>
+        <span class="keyword">self</span>.out = nn.Linear(num_kp * <span class="number">2</span>, config.diffusion_step_embed_dim)
+    
+    <span class="keyword">def</span> <span class="function">forward</span>(<span class="keyword">self</span>, x):
+        <span class="comment"># x: (B, C, H, W)</span>
+        x = <span class="keyword">self</span>.backbone(x)           <span class="comment"># (B, 512, H', W')</span>
+        x = <span class="keyword">self</span>.pool(x)               <span class="comment"># (B, num_kp * 2)</span>
+        x = F.relu(<span class="keyword">self</span>.out(x))       <span class="comment"># (B, embed_dim)</span>
+        <span class="keyword">return</span> x</code></pre>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- SECTION 11: Comparison -->
+    <!-- ============================================ -->
+    <h2 id="comparison">📊 11. Model Comparison Summary</h2>
+
+    <table class="comparison-table">
+        <thead>
+            <tr>
+                <th>Feature</th>
+                <th>SmolVLA</th>
+                <th>Pi0</th>
+                <th>Pi0.5</th>
+                <th>Pi0.5-Fast</th>
+                <th>ACT</th>
+                <th>Groot</th>
+                <th>Diffusion</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Vision Encoder</strong></td>
+                <td>SigLIP (SmolVLM)</td>
+                <td>SigLIP (PaliGemma)</td>
+                <td>SigLIP (PaliGemma)</td>
+                <td>SigLIP (PaliGemma)</td>
+                <td>ResNet18</td>
+                <td>Eagle VL</td>
+                <td>ResNet (configurable)</td>
+            </tr>
+            <tr>
+                <td><strong>Language Model</strong></td>
+                <td>SmolVLM2 LLM</td>
+                <td>Gemma 2B</td>
+                <td>Gemma 2B</td>
+                <td>Gemma 2B</td>
+                <td>None</td>
+                <td>Eagle LLM</td>
+                <td>None</td>
+            </tr>
+            <tr>
+                <td><strong>Action Generation</strong></td>
+                <td>Flow Matching</td>
+                <td>Flow Matching</td>
+                <td>Flow Matching</td>
+                <td>Flow Matching</td>
+                <td>Encoder-Decoder</td>
+                <td>Flow Matching (DiT)</td>
+                <td>DDPM/DDIM Denoising</td>
+            </tr>
+            <tr>
+                <td><strong>Image Resolution</strong></td>
+                <td>512×512</td>
+                <td>224×224</td>
+                <td>224×224</td>
+                <td>224×224</td>
+                <td>96×96 (configurable)</td>
+                <td>Variable (Eagle)</td>
+                <td>96×96 (configurable)</td>
+            </tr>
+            <tr>
+                <td><strong>Default chunk_size</strong></td>
+                <td>50</td>
+                <td>50</td>
+                <td>50</td>
+                <td>50</td>
+                <td>100</td>
+                <td>16</td>
+                <td>Variable (horizon)</td>
+            </tr>
+            <tr>
+                <td><strong>Loss Function</strong></td>
+                <td>MSE (velocity)</td>
+                <td>MSE (velocity)</td>
+                <td>MSE (velocity)</td>
+                <td>MSE (velocity)</td>
+                <td>L1 + KL (VAE)</td>
+                <td>MSE (velocity)</td>
+                <td>MSE (noise/sample)</td>
+            </tr>
+            <tr>
+                <td><strong>Normalization</strong></td>
+                <td>Mean-Std (state/action)</td>
+                <td>Mean-Std (state/action)</td>
+                <td>Quantiles (state/action)</td>
+                <td>Quantiles (state/action)</td>
+                <td>Mean-Std (all)</td>
+                <td>Min-Max</td>
+                <td>Mean-Std (all)</td>
+            </tr>
+            <tr>
+                <td><strong>Language Conditioning</strong></td>
+                <td>✅ Yes</td>
+                <td>✅ Yes</td>
+                <td>✅ Yes</td>
+                <td>✅ Yes</td>
+                <td>❌ No</td>
+                <td>✅ Yes</td>
+                <td>❌ No</td>
+            </tr>
+            <tr>
+                <td><strong>Robot State Input</strong></td>
+                <td>✅ PREFIX (state_proj)</td>
+                <td>✅ SUFFIX (state_proj)</td>
+                <td>⚠️ Tokenized in prompt</td>
+                <td>⚠️ Tokenized in prompt</td>
+                <td>✅ Yes</td>
+                <td>✅ Yes</td>
+                <td>✅ Yes</td>
+            </tr>
+            <tr>
+                <td><strong>Expert Size</strong></td>
+                <td>Lightweight</td>
+                <td>Gemma 300M</td>
+                <td>Gemma 300M</td>
+                <td>Gemma 300M</td>
+                <td>N/A</td>
+                <td>DiT</td>
+                <td>UNet</td>
+            </tr>
+            <tr>
+                <td><strong>Tokenizer Length</strong></td>
+                <td>48 tokens</td>
+                <td>48 tokens</td>
+                <td>200 tokens</td>
+                <td>200 tokens</td>
+                <td>N/A</td>
+                <td>Variable</td>
+                <td>N/A</td>
+            </tr>
+            <tr>
+                <td><strong>Finetuning Strategy</strong></td>
+                <td>Expert only (freeze VLM)</td>
+                <td>Expert only (freeze VLM)</td>
+                <td>Expert only (freeze VLM)</td>
+                <td>Expert only (freeze VLM)</td>
+                <td>Full model</td>
+                <td>Configurable</td>
+                <td>Full model</td>
+            </tr>
+            <tr>
+                <td><strong>Inference Steps</strong></td>
+                <td>10 (flow steps)</td>
+                <td>10 (flow steps)</td>
+                <td>10 (flow steps)</td>
+                <td>5 (flow steps)</td>
+                <td>1 (direct)</td>
+                <td>10 (flow steps)</td>
+                <td>100 (denoising)</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="key-concept">
+        <h4>🎯 Choosing the Right Model</h4>
+        <ul>
+            <li><strong>SmolVLA:</strong> Best for language-conditioned tasks with limited compute. Lightweight and fast.</li>
+            <li><strong>Pi0:</strong> High-quality VLA with strong generalization. Uses robot state. Good for complex manipulation tasks.</li>
+            <li><strong>Pi0.5:</strong> Open-world generalization without robot state. Uses AdaRMS conditioning. Longer language instructions (200 tokens).</li>
+            <li><strong>Pi0.5-Fast:</strong> Pi0.5 with 5 inference steps instead of 10. ~2x faster inference, slightly lower quality.</li>
+            <li><strong>ACT:</strong> Best for bimanual manipulation (Aloha). Fast inference, simple architecture.</li>
+            <li><strong>Groot:</strong> Multi-embodiment support. Good for transferring policies across robots.</li>
+            <li><strong>Diffusion:</strong> Versatile and proven. Good for multi-modal action distributions.</li>
+        </ul>
+    </div>
+
+    <hr style="margin: 50px 0; border-color: var(--border-color);">
+    <p style="text-align: center; color: var(--text-secondary);">
+        Generated for LeRobot Training Pipeline Understanding<br>
+        <a href="https://github.com/huggingface/lerobot" style="color: var(--accent-blue);">https://github.com/huggingface/lerobot</a>
+    </p>
+</body>
+</html>
+

@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LeRobot Data Collection Pipeline — Deep Dive</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-orange: #d29922;
+            --accent-red: #f85149;
+            --accent-purple: #a371f7;
+            --border-color: #30363d;
+            --code-bg: #1a1f26;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.7;
+            padding: 0;
+        }
+
+        .hero {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            padding: 80px 20px;
+            text-align: center;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .hero h1 {
+            font-size: 3rem;
+            font-weight: 700;
+            margin-bottom: 16px;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero .subtitle {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 24px;
+        }
+
+        h2 {
+            font-size: 1.75rem;
+            color: var(--accent-blue);
+            margin: 48px 0 24px 0;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        h3 {
+            font-size: 1.25rem;
+            color: var(--accent-green);
+            margin: 32px 0 16px 0;
+        }
+
+        h4 {
+            font-size: 1.1rem;
+            color: var(--accent-orange);
+            margin: 24px 0 12px 0;
+        }
+
+        p {
+            margin-bottom: 16px;
+            color: var(--text-primary);
+        }
+
+        .info-box {
+            background: var(--bg-secondary);
+            border-left: 4px solid var(--accent-blue);
+            padding: 16px 20px;
+            margin: 24px 0;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .warning-box {
+            background: rgba(210, 153, 34, 0.1);
+            border-left: 4px solid var(--accent-orange);
+            padding: 16px 20px;
+            margin: 24px 0;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .warning-box strong {
+            color: var(--accent-orange);
+        }
+
+        pre {
+            background: var(--code-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            overflow-x: auto;
+            margin: 16px 0;
+            font-size: 0.9rem;
+        }
+
+        code {
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            color: var(--accent-green);
+        }
+
+        pre code {
+            color: var(--text-primary);
+        }
+
+        .keyword { color: var(--accent-purple); }
+        .string { color: var(--accent-green); }
+        .comment { color: var(--text-secondary); font-style: italic; }
+        .function { color: var(--accent-blue); }
+        .number { color: var(--accent-orange); }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 24px 0;
+            font-size: 0.85rem;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+        }
+
+        th, td {
+            padding: 10px 12px;
+            text-align: left;
+            border: 1px solid var(--border-color);
+            white-space: nowrap;
+        }
+
+        th {
+            background: var(--bg-tertiary);
+            color: var(--accent-blue);
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        tr:nth-child(even) {
+            background: var(--bg-secondary);
+        }
+
+        tr:hover {
+            background: rgba(88, 166, 255, 0.1);
+        }
+
+        td code {
+            font-size: 0.9em;
+            background: var(--code-bg);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .diagram {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 24px;
+            margin: 24px 0;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            white-space: pre;
+            line-height: 1.4;
+        }
+
+        .layer-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            margin: 24px 0;
+        }
+
+        .layer-card h3 {
+            margin-top: 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .layer-badge {
+            background: var(--accent-purple);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .file-tree {
+            background: var(--code-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            line-height: 1.6;
+        }
+
+        .file-tree pre {
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            border: none;
+            font-family: inherit;
+            font-size: inherit;
+            color: inherit;
+            white-space: pre;
+            overflow-x: visible;
+        }
+
+        .file-tree .folder { 
+            color: var(--accent-blue); 
+            font-weight: 600; 
+        }
+        
+        .file-tree .file { 
+            color: var(--text-primary); 
+        }
+        
+        .file-tree .comment { 
+            color: var(--text-secondary); 
+            font-style: italic; 
+        }
+
+        ul, ol {
+            margin: 16px 0 16px 24px;
+        }
+
+        li {
+            margin-bottom: 8px;
+        }
+
+        .toc {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            margin: 32px 0;
+        }
+
+        .toc h3 {
+            margin-top: 0;
+            color: var(--text-primary);
+        }
+
+        .toc ul {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .toc li {
+            margin: 8px 0;
+        }
+
+        .toc a {
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+
+        .toc a:hover {
+            text-decoration: underline;
+        }
+
+        .summary-box {
+            background: linear-gradient(135deg, rgba(88, 166, 255, 0.1) 0%, rgba(163, 113, 247, 0.1) 100%);
+            border: 1px solid var(--accent-purple);
+            border-radius: 12px;
+            padding: 24px;
+            margin: 32px 0;
+        }
+
+        footer {
+            text-align: center;
+            padding: 40px 20px;
+            border-top: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            margin-top: 60px;
+        }
+
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2rem;
+            }
+            .container {
+                padding: 24px 16px;
+            }
+            pre {
+                font-size: 0.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="hero">
+        <h1>🤖 LeRobot Data Pipeline</h1>
+        <p class="subtitle">A comprehensive deep-dive into how robot demonstrations are captured, timestamped, and stored — from bits on the wire to training-ready datasets.</p>
+    </div>
+
+    <div class="container">
+        <div class="toc">
+            <h3>📑 Table of Contents</h3>
+            <ul>
+                <li><a href="#overview">Architecture Overview</a></li>
+                <li><a href="#layer1">Layer 1: Hardware Communication</a></li>
+                <li><a href="#layer2">Layer 2: Robot Abstraction</a></li>
+                <li><a href="#layer3">Layer 3: Recording Loop</a></li>
+                <li><a href="#layer4">Layer 4: In-Memory Buffering</a></li>
+                <li><a href="#layer5">Layer 5: Episode Finalization</a></li>
+                <li><a href="#layer6">Layer 6: Dataset Structure on Disk</a></li>
+                <li><a href="#layer7">Layer 7: Video Timestamp Resolution</a></li>
+                <li><a href="#keyframes">Understanding Keyframes & GOP Size</a></li>
+                <li><a href="#troubleshooting">Common Issues & Troubleshooting</a></li>
+            </ul>
+        </div>
+
+        <h2 id="overview">🏗️ Architecture Overview</h2>
+
+        <div class="diagram">
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           RECORDING LOOP (lerobot_record.py)                │
+│                              @ configured FPS (e.g., 30 Hz)                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+        ┌─────────────────────────────┼─────────────────────────────┐
+        ▼                             ▼                             ▼
+┌───────────────┐           ┌───────────────────┐           ┌───────────────┐
+│   CAMERAS     │           │     ROBOT         │           │  TELEOPERATOR │
+│  (OpenCV,     │           │  (SO100, LeKiwi,  │           │  (Leader arm, │
+│   RealSense)  │           │   Unitree G1...)  │           │   Keyboard)   │
+└───────┬───────┘           └────────┬──────────┘           └───────┬───────┘
+        │                            │                              │
+        │ USB/Network                │ Serial/USB/DDS               │ Serial/USB
+        ▼                            ▼                              ▼
+┌───────────────┐           ┌───────────────────┐           ┌───────────────┐
+│ camera.read() │           │ bus.sync_read()   │           │ teleop.       │
+│ → numpy array │           │ → motor positions │           │ get_action()  │
+└───────┬───────┘           └────────┬──────────┘           └───────┬───────┘
+        │                            │                              │
+        └─────────────────┬──────────┴──────────────────────────────┘
+                          ▼
+                ┌─────────────────────┐
+                │ robot.get_         │
+                │ observation()      │──► obs_dict: {"motor.pos": float, "cam": array}
+                └─────────┬──────────┘
+                          │
+                          ▼
+                ┌─────────────────────┐
+                │ build_dataset_     │──► {"observation.state": [...], "observation.images.cam1": ...}
+                │ frame()            │
+                └─────────┬──────────┘
+                          │
+                          ▼
+                ┌─────────────────────┐
+                │ dataset.add_frame()│──► episode_buffer + images written to temp PNG
+                └─────────┬──────────┘
+                          │
+            (end of episode)
+                          │
+                          ▼
+                ┌─────────────────────┐
+                │ dataset.           │──► Parquet + MP4 + Episode Metadata
+                │ save_episode()     │
+                └─────────────────────┘
+        </div>
+
+        <h2 id="layer1">🔌 Layer 1: Hardware Communication (Bits on the Wire)</h2>
+
+        <div class="layer-card">
+            <h3><span class="layer-badge">Motors</span> Serial Communication</h3>
+            <p>Motors use <strong>serial communication</strong> via USB-to-TTL adapters. LeRobot supports two motor families:</p>
+            
+            <h4>Dynamixel Motors</h4>
+            <pre><code><span class="comment"># Uses dynamixel_sdk for packet-based serial communication</span>
+<span class="keyword">self</span>.port_handler = dxl.PortHandler(<span class="keyword">self</span>.port)  <span class="comment"># e.g., "/dev/ttyUSB0"</span>
+<span class="keyword">self</span>.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)  <span class="comment"># Protocol 2.0</span>
+<span class="keyword">self</span>.sync_reader = dxl.GroupSyncRead(...)  <span class="comment"># Efficient batch reads</span></code></pre>
+
+            <h4>Feetech Motors</h4>
+            <pre><code><span class="comment"># Uses scservo_sdk (similar API to dynamixel)</span>
+<span class="keyword">self</span>.port_handler = scs.PortHandler(<span class="keyword">self</span>.port)
+<span class="keyword">self</span>.packet_handler = scs.PacketHandler(protocol_version)</code></pre>
+
+            <h4>Serial Protocol (Byte Level)</h4>
+            <p>The actual communication uses structured packets:</p>
+            <pre><code><span class="comment"># TX packet (request):</span>
+[HEADER] [ID] [LENGTH] [INSTRUCTION] [PARAMS] [CHECKSUM]
+
+<span class="comment"># RX packet (response):</span>
+[HEADER] [ID] [LENGTH] [ERROR] [DATA...] [CHECKSUM]</code></pre>
+
+            <p>Data is raw register values (e.g., position as 12-bit integer 0-4095), then <strong>normalized</strong> to meaningful units:</p>
+            <pre><code><span class="keyword">def</span> <span class="function">sync_read</span>(<span class="keyword">self</span>, data_name, motors, normalize=<span class="keyword">True</span>):
+    <span class="comment"># ... read raw values ...</span>
+    <span class="keyword">if</span> normalize:
+        <span class="comment"># Convert raw position (0-4095) to radians using calibration</span>
+        values = <span class="keyword">self</span>._normalize_data(data_name, values)
+    <span class="keyword">return</span> values</code></pre>
+        </div>
+
+        <div class="layer-card">
+            <h3><span class="layer-badge">Cameras</span> Frame Capture</h3>
+            
+            <h4>OpenCV Camera</h4>
+            <pre><code><span class="keyword">def</span> <span class="function">read</span>(<span class="keyword">self</span>, color_mode=<span class="keyword">None</span>):
+    start_time = time.perf_counter()
+    
+    ret, frame = <span class="keyword">self</span>.videocapture.read()  <span class="comment"># Blocks until frame arrives from USB</span>
+    
+    <span class="keyword">if not</span> ret <span class="keyword">or</span> frame <span class="keyword">is None</span>:
+        <span class="keyword">raise</span> RuntimeError(<span class="string">f"Read failed"</span>)
+    
+    processed_frame = <span class="keyword">self</span>._postprocess_image(frame, color_mode)  <span class="comment"># BGR→RGB, rotation</span>
+    
+    <span class="keyword">return</span> processed_frame  <span class="comment"># numpy.ndarray shape (H, W, 3), dtype uint8</span></code></pre>
+
+            <h4>RealSense Camera</h4>
+            <pre><code><span class="keyword">def</span> <span class="function">read</span>(<span class="keyword">self</span>, color_mode=<span class="keyword">None</span>, timeout_ms=<span class="number">200</span>):
+    ret, frame = <span class="keyword">self</span>.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
+    
+    color_frame = frame.get_color_frame()
+    color_image_raw = np.asanyarray(color_frame.get_data())  <span class="comment"># Zero-copy from USB buffer</span>
+    
+    <span class="keyword">return</span> <span class="keyword">self</span>._postprocess_image(color_image_raw, color_mode)</code></pre>
+        </div>
+
+        <h2 id="layer2">🤖 Layer 2: Robot Abstraction</h2>
+
+        <div class="layer-card">
+            <p>The <code>Robot</code> base class defines a unified interface for all robot types:</p>
+            <pre><code><span class="keyword">class</span> <span class="function">Robot</span>(abc.ABC):
+    @abc.abstractmethod
+    <span class="keyword">def</span> <span class="function">get_observation</span>(<span class="keyword">self</span>) -> dict[str, Any]:
+        <span class="string">"""Returns flat dict: {"motor1.pos": float, "cam1": np.ndarray, ...}"""</span>
+        <span class="keyword">pass</span>
+    
+    @abc.abstractmethod
+    <span class="keyword">def</span> <span class="function">send_action</span>(<span class="keyword">self</span>, action: dict[str, Any]) -> dict[str, Any]:
+        <span class="string">"""Sends goal positions to motors, returns actually sent values"""</span>
+        <span class="keyword">pass</span></code></pre>
+
+            <h4>Example Implementation (SO100)</h4>
+            <pre><code><span class="keyword">def</span> <span class="function">get_observation</span>(<span class="keyword">self</span>) -> dict[str, Any]:
+    <span class="comment"># Read all motor positions in one batch (efficient)</span>
+    obs_dict = <span class="keyword">self</span>.bus.sync_read(<span class="string">"Present_Position"</span>)
+    obs_dict = {<span class="string">f"{motor}.pos"</span>: val <span class="keyword">for</span> motor, val <span class="keyword">in</span> obs_dict.items()}
+    
+    <span class="comment"># Capture images from all cameras</span>
+    <span class="keyword">for</span> cam_key, cam <span class="keyword">in</span> <span class="keyword">self</span>.cameras.items():
+        obs_dict[cam_key] = cam.async_read()  <span class="comment"># numpy array (H, W, 3)</span>
+    
+    <span class="keyword">return</span> obs_dict  <span class="comment"># Flat dict with ~10 motor values + 2-3 images</span></code></pre>
+        </div>
+
+        <h2 id="layer3">🔄 Layer 3: Recording Loop</h2>
+
+        <div class="layer-card">
+            <p>The main recording loop runs at <strong>fixed FPS</strong> (typically 30 Hz):</p>
+            <pre><code><span class="keyword">def</span> <span class="function">record_loop</span>(robot, dataset, fps, teleop, ...):
+    timestamp = <span class="number">0</span>
+    start_episode_t = time.perf_counter()
+    
+    <span class="keyword">while</span> timestamp < control_time_s:
+        start_loop_t = time.perf_counter()
+        
+        <span class="comment"># 1. Get current robot state (motors + cameras)</span>
+        obs = robot.get_observation()
+        
+        <span class="comment"># 2. Get action from teleoperator (leader arm / keyboard)</span>
+        raw_action = teleop.get_action()
+        
+        <span class="comment"># 3. Send action to robot (follower arm)</span>
+        _sent_action = robot.send_action(robot_action_to_send)
+        
+        <span class="comment"># 4. Write frame to dataset</span>
+        <span class="keyword">if</span> dataset <span class="keyword">is not None</span>:
+            observation_frame = build_dataset_frame(dataset.features, obs, prefix=<span class="string">"observation"</span>)
+            action_frame = build_dataset_frame(dataset.features, raw_action, prefix=<span class="string">"action"</span>)
+            frame = {**observation_frame, **action_frame, <span class="string">"task"</span>: single_task}
+            dataset.add_frame(frame)
+        
+        <span class="comment"># 5. Sleep to maintain target FPS</span>
+        dt_s = time.perf_counter() - start_loop_t
+        precise_sleep(<span class="number">1</span> / fps - dt_s)  <span class="comment"># e.g., sleep ~30ms for 30 FPS</span>
+        
+        timestamp = time.perf_counter() - start_episode_t</code></pre>
+        </div>
+
+        <h2 id="layer4">📦 Layer 4: In-Memory Buffering</h2>
+
+        <div class="layer-card">
+            <p>When <code>dataset.add_frame(frame)</code> is called:</p>
+            <pre><code><span class="keyword">def</span> <span class="function">add_frame</span>(<span class="keyword">self</span>, frame: dict) -> <span class="keyword">None</span>:
+    <span class="string">"""
+    Adds frame to episode_buffer. Images are written to temp PNG files immediately.
+    Nothing else is written to disk until save_episode() is called.
+    """</span>
+    
+    <span class="comment"># Auto-generate frame_index and timestamp</span>
+    frame_index = <span class="keyword">self</span>.episode_buffer[<span class="string">"size"</span>]
+    timestamp = frame.pop(<span class="string">"timestamp"</span>) <span class="keyword">if</span> <span class="string">"timestamp"</span> <span class="keyword">in</span> frame <span class="keyword">else</span> frame_index / <span class="keyword">self</span>.fps
+    <span class="comment"># ⚠️ NOTE: timestamp = frame_index / fps (e.g., frame 30 → 1.0 second)</span>
+    <span class="comment">#    This is EPISODE-RELATIVE time, starting from 0 each episode</span>
+    
+    <span class="keyword">self</span>.episode_buffer[<span class="string">"frame_index"</span>].append(frame_index)
+    <span class="keyword">self</span>.episode_buffer[<span class="string">"timestamp"</span>].append(timestamp)
+    
+    <span class="keyword">for</span> key <span class="keyword">in</span> frame:
+        <span class="keyword">if</span> <span class="keyword">self</span>.features[key][<span class="string">"dtype"</span>] <span class="keyword">in</span> [<span class="string">"image"</span>, <span class="string">"video"</span>]:
+            <span class="comment"># Write image to temporary PNG immediately</span>
+            img_path = <span class="keyword">self</span>._get_image_file_path(episode_index, image_key=key, frame_index=frame_index)
+            <span class="keyword">self</span>._save_image(frame[key], img_path)
+            <span class="keyword">self</span>.episode_buffer[key].append(str(img_path))
+        <span class="keyword">else</span>:
+            <span class="comment"># Scalar/vector data stays in memory</span>
+            <span class="keyword">self</span>.episode_buffer[key].append(frame[key])</code></pre>
+
+            <h4>Temporary Image Storage</h4>
+            <div class="file-tree">
+<span class="folder">dataset_root/</span>
+└── <span class="folder">images/</span>
+    └── <span class="folder">observation.images.cam1/</span>
+        └── <span class="folder">episode-000000/</span>
+            ├── <span class="file">frame-000000.png</span>
+            ├── <span class="file">frame-000001.png</span>
+            └── <span class="file">frame-000002.png</span>
+            </div>
+        </div>
+
+        <h2 id="layer5">💾 Layer 5: Episode Finalization</h2>
+
+        <div class="layer-card">
+            <p>When the episode ends, <code>dataset.save_episode()</code> is called:</p>
+            <pre><code><span class="keyword">def</span> <span class="function">save_episode</span>(<span class="keyword">self</span>, episode_data=<span class="keyword">None</span>, parallel_encoding=<span class="keyword">True</span>):
+    episode_index = <span class="keyword">self</span>.episode_buffer[<span class="string">"episode_index"</span>]
+    episode_length = <span class="keyword">self</span>.episode_buffer[<span class="string">"size"</span>]
+    
+    <span class="comment"># 1. Save tabular data (state, action, timestamps) to Parquet</span>
+    ep_metadata = <span class="keyword">self</span>._save_episode_data(<span class="keyword">self</span>.episode_buffer)
+    
+    <span class="comment"># 2. Encode video from temporary PNGs → MP4</span>
+    <span class="comment">#    Multiple episodes may be concatenated into the same MP4 file</span>
+    <span class="keyword">if</span> has_video_keys:
+        <span class="keyword">for</span> video_key <span class="keyword">in</span> <span class="keyword">self</span>.meta.video_keys:
+            ep_metadata.update(<span class="keyword">self</span>._save_episode_video(video_key, episode_index))
+    
+    <span class="comment"># 3. Save episode metadata (length, timestamps, file locations)</span>
+    <span class="keyword">self</span>.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
+    
+    <span class="comment"># 4. Clear the buffer</span>
+    <span class="keyword">self</span>.episode_buffer = <span class="keyword">self</span>.create_episode_buffer()</code></pre>
+
+            <h4>Video Encoding (PNGs → MP4)</h4>
+            <p>Each episode's PNG frames are encoded into a temporary MP4, then concatenated with other episodes into a shared video file:</p>
+            <pre><code><span class="keyword">def</span> <span class="function">encode_video_frames</span>(imgs_dir, video_path, fps, vcodec=<span class="string">"libsvtav1"</span>, g=<span class="number">2</span>, crf=<span class="number">30</span>):
+    <span class="string">"""
+    Encodes PNG frames into MP4 video.
+    
+    Args:
+        g: GOP size (keyframe interval). 
+           g=2 means every 2nd frame is a keyframe (default).
+           g=1 means every frame is a keyframe (best for random access, larger file size).
+           See "Keyframes" section below for details.
+    """</span>
+    input_list = sorted(glob.glob(str(imgs_dir / <span class="string">"frame-*.png"</span>)))
+    
+    <span class="keyword">with</span> av.open(str(video_path), <span class="string">"w"</span>) <span class="keyword">as</span> output:
+        output_stream = output.add_stream(vcodec, fps, options={<span class="string">"g"</span>: str(g), <span class="string">"crf"</span>: str(crf)})
+        
+        <span class="keyword">for</span> input_data <span class="keyword">in</span> input_list:
+            <span class="keyword">with</span> Image.open(input_data) <span class="keyword">as</span> input_image:
+                input_frame = av.VideoFrame.from_image(input_image.convert(<span class="string">"RGB"</span>))
+                packet = output_stream.encode(input_frame)
+                <span class="keyword">if</span> packet:
+                    output.mux(packet)</code></pre>
+            
+            <div class="info-box">
+                <strong>Keyframes & GOP Size:</strong>
+                <ul>
+                    <li><strong>Keyframes (I-frames)</strong>: Independently decodable frames stored as full images</li>
+                    <li><strong>P-frames</strong>: Store differences relative to the previous keyframe (smaller file size)</li>
+                    <li><strong>GOP size (g)</strong>: How often keyframes appear. <code>g=2</code> means every 2nd frame is a keyframe</li>
+                    <li><strong>Impact on decoding</strong>: Decoders like <code>pyav</code> can only seek to keyframes, causing tolerance issues if <code>g</code> is too large</li>
+                    <li><strong>Recommendation</strong>: Use <code>g=1</code> for training datasets to ensure accurate frame access</li>
+                </ul>
+            </div>
+        </div>
+
+        <h2 id="layer6">📁 Layer 6: Final Dataset Structure on Disk</h2>
+
+        <div class="file-tree">
+<pre><span class="folder">dataset_root/</span>
+├── <span class="folder">meta/</span>
+│   ├── <span class="file">info.json</span>                           <span class="comment"># Dataset metadata</span>
+│   ├── <span class="file">tasks.parquet</span>                       <span class="comment"># Task descriptions</span>
+│   ├── <span class="file">stats.safetensors</span>                   <span class="comment"># Feature statistics (mean/std)</span>
+│   └── <span class="folder">episodes/</span>
+│       └── <span class="folder">chunk-000/</span>
+│           └── <span class="file">file-000.parquet</span>            <span class="comment"># Episode metadata</span>
+│
+├── <span class="folder">data/</span>
+│   └── <span class="folder">chunk-000/</span>
+│       └── <span class="file">file-000.parquet</span>                <span class="comment"># Frame-level tabular data</span>
+│
+└── <span class="folder">videos/</span>
+    ├── <span class="folder">observation.images.cam1/</span>
+    │   └── <span class="folder">chunk-000/</span>
+    │       └── <span class="file">file-000.mp4</span>                <span class="comment"># Video file</span>
+    └── <span class="folder">observation.images.cam2/</span>
+        └── <span class="folder">chunk-000/</span>
+            └── <span class="file">file-000.mp4</span></pre>
+        </div>
+
+        <h4>meta/info.json</h4>
+        <pre><code>{
+    <span class="string">"codebase_version"</span>: <span class="string">"v3.0"</span>,
+    <span class="string">"robot_type"</span>: <span class="string">"so100"</span>,
+    <span class="string">"fps"</span>: <span class="number">30</span>,
+    <span class="string">"total_episodes"</span>: <span class="number">50</span>,
+    <span class="string">"total_frames"</span>: <span class="number">15000</span>,
+    <span class="string">"data_path"</span>: <span class="string">"data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"</span>,
+    <span class="string">"video_path"</span>: <span class="string">"videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"</span>,
+    <span class="string">"features"</span>: {
+        <span class="string">"observation.state"</span>: {
+            <span class="string">"dtype"</span>: <span class="string">"float32"</span>,
+            <span class="string">"shape"</span>: [<span class="number">6</span>],
+            <span class="string">"names"</span>: [<span class="string">"shoulder.pos"</span>, <span class="string">"elbow.pos"</span>, ...]
+        },
+        <span class="string">"observation.images.cam1"</span>: {
+            <span class="string">"dtype"</span>: <span class="string">"video"</span>,
+            <span class="string">"shape"</span>: [<span class="number">480</span>, <span class="number">640</span>, <span class="number">3</span>]
+        }
+    }
+}</code></pre>
+
+        <h4>Episode Metadata (Parquet)</h4>
+        <p>Each row in <code>meta/episodes/chunk-*/file-*.parquet</code> contains metadata for one episode:</p>
+        <div style="overflow-x: auto; margin: 24px 0;">
+            <table style="min-width: 800px;">
+                <tr>
+                    <th>episode_index</th>
+                    <th>length</th>
+                    <th>data/chunk_index</th>
+                    <th>data/file_index</th>
+                    <th>dataset_from_index</th>
+                    <th>dataset_to_index</th>
+                    <th>videos/observation.images.cam1/chunk_index</th>
+                    <th>videos/observation.images.cam1/file_index</th>
+                    <th>videos/observation.images.cam1/from_timestamp</th>
+                    <th>videos/observation.images.cam1/to_timestamp</th>
+                </tr>
+                <tr>
+                    <td>0</td>
+                    <td>300</td>
+                    <td>0</td>
+                    <td>0</td>
+                    <td>0</td>
+                    <td>300</td>
+                    <td>0</td>
+                    <td>0</td>
+                    <td>0.0</td>
+                    <td>10.0</td>
+                </tr>
+                <tr>
+                    <td>1</td>
+                    <td>280</td>
+                    <td>0</td>
+                    <td>0</td>
+                    <td>300</td>
+                    <td>580</td>
+                    <td>0</td>
+                    <td>0</td>
+                    <td>10.0</td>
+                    <td>19.33</td>
+                </tr>
+                <tr>
+                    <td>2</td>
+                    <td>310</td>
+                    <td>0</td>
+                    <td>0</td>
+                    <td>580</td>
+                    <td>890</td>
+                    <td>0</td>
+                    <td>0</td>
+                    <td>19.33</td>
+                    <td>29.67</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="info-box">
+            <strong>Field Descriptions:</strong>
+            <ul>
+                <li><code>episode_index</code>: Unique episode identifier (0-indexed)</li>
+                <li><code>length</code>: Number of frames in this episode</li>
+                <li><code>data/chunk_index</code>, <code>data/file_index</code>: Location of episode's tabular data in Parquet files</li>
+                <li><code>dataset_from_index</code>, <code>dataset_to_index</code>: Global frame indices (across entire dataset)</li>
+                <li><code>videos/{video_key}/chunk_index</code>, <code>videos/{video_key}/file_index</code>: Location of episode's video segment in MP4 files</li>
+                <li><code>videos/{video_key}/from_timestamp</code>, <code>videos/{video_key}/to_timestamp</code>: Timestamp range <strong>within the MP4 file</strong> (in seconds)</li>
+            </ul>
+        </div>
+
+        <div class="warning-box">
+            <strong>⚠️ Critical:</strong> <code>from_timestamp</code> and <code>to_timestamp</code> define where each episode sits <strong>within the MP4 file</strong>. If <code>to_timestamp</code> exceeds the actual MP4 duration, video decoding will fail during training! Multiple episodes can share the same MP4 file, concatenated sequentially.
+        </div>
+
+        <h4>Frame-Level Data (Parquet)</h4>
+        <p>Each row in <code>data/chunk-*/file-*.parquet</code> contains data for one frame:</p>
+        <div style="overflow-x: auto; margin: 24px 0;">
+            <table style="min-width: 700px;">
+                <tr>
+                    <th>index</th>
+                    <th>episode_index</th>
+                    <th>frame_index</th>
+                    <th>timestamp</th>
+                    <th>observation.state</th>
+                    <th>action</th>
+                    <th>task</th>
+                </tr>
+                <tr>
+                    <td>0</td>
+                    <td>0</td>
+                    <td>0</td>
+                    <td>0.000</td>
+                    <td>[0.1, 0.2, ...]</td>
+                    <td>[0.1, 0.2, ...]</td>
+                    <td>"pick_cube"</td>
+                </tr>
+                <tr>
+                    <td>1</td>
+                    <td>0</td>
+                    <td>1</td>
+                    <td>0.033</td>
+                    <td>[0.11, 0.21, ...]</td>
+                    <td>[0.11, 0.21, ...]</td>
+                    <td>"pick_cube"</td>
+                </tr>
+                <tr>
+                    <td>299</td>
+                    <td>0</td>
+                    <td>299</td>
+                    <td>9.967</td>
+                    <td>[0.9, 1.0, ...]</td>
+                    <td>[0.9, 1.0, ...]</td>
+                    <td>"pick_cube"</td>
+                </tr>
+                <tr>
+                    <td>300</td>
+                    <td>1</td>
+                    <td>0</td>
+                    <td>0.000</td>
+                    <td>[0.5, 0.6, ...]</td>
+                    <td>[0.5, 0.6, ...]</td>
+                    <td>"place_cube"</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="info-box">
+            <strong>Key fields:</strong>
+            <ul>
+                <li><code>index</code>: Global frame index across entire dataset</li>
+                <li><code>frame_index</code>: Frame index <strong>within</strong> the episode (resets to 0 each episode)</li>
+                <li><code>timestamp</code>: Time <strong>within</strong> the episode (resets to 0.0 each episode)</li>
+            </ul>
+        </div>
+
+        <h2 id="layer7">🎬 Layer 7: Video Timestamp Resolution (Training)</h2>
+
+        <div class="layer-card">
+            <p>When training loads a frame, it converts episode-relative timestamps to MP4-absolute positions:</p>
+            <pre><code><span class="keyword">def</span> <span class="function">_query_videos</span>(<span class="keyword">self</span>, query_timestamps: dict, ep_idx: int) -> dict:
+    ep = <span class="keyword">self</span>.meta.episodes[ep_idx]
+    
+    frames = {}
+    <span class="keyword">for</span> vid_key, query_ts <span class="keyword">in</span> query_timestamps.items():
+        <span class="comment"># Get this episode's position within the MP4 file</span>
+        from_timestamp = ep[<span class="string">f"videos/{vid_key}/from_timestamp"</span>]
+        
+        <span class="comment"># Convert episode-relative timestamps to MP4-absolute timestamps</span>
+        shifted_query_ts = [from_timestamp + ts <span class="keyword">for</span> ts <span class="keyword">in</span> query_ts]
+        
+        <span class="comment"># Decode video frames at those absolute timestamps</span>
+        video_path = <span class="keyword">self</span>.meta.get_video_file_path(ep_idx, vid_key)
+        frames[vid_key] = decode_video_frames(
+            video_path, 
+            shifted_query_ts, 
+            tolerance_s=<span class="keyword">self</span>.tolerance_s,
+            backend=<span class="keyword">self</span>.video_backend
+        )
+    
+    <span class="keyword">return</span> frames</code></pre>
+
+            <h4>Example Calculation</h4>
+            <div class="info-box">
+                <p><strong>Scenario:</strong> Training needs frame at timestamp <code>5.0</code> seconds within Episode 2</p>
+                <ul>
+                    <li>Episode 2 metadata: <code>videos/observation.images.cam1/from_timestamp = 19.33</code>, <code>to_timestamp = 29.67</code></li>
+                    <li>Episode-relative timestamp: <code>5.0</code> seconds (5 seconds into the episode)</li>
+                    <li>MP4 absolute timestamp: <code>19.33 + 5.0 = 24.33</code> seconds</li>
+                    <li>Video decoder seeks to <code>24.33s</code> in the MP4 file to retrieve the frame</li>
+                </ul>
+                <p><strong>Note:</strong> Multiple episodes are concatenated into the same MP4 file, so timestamps are cumulative across episodes.</p>
+            </div>
+        </div>
+
+        <h2 id="keyframes">🎞️ Understanding Keyframes & GOP Size</h2>
+
+        <div class="layer-card">
+            <h3>What are Keyframes?</h3>
+            <p>Video codecs use <strong>inter-frame compression</strong> to reduce file size:</p>
+            <ul>
+                <li><strong>I-frames (Keyframes)</strong>: Store complete image data (independently decodable)</li>
+                <li><strong>P-frames (Predicted frames)</strong>: Store only differences from previous keyframe (much smaller)</li>
+                <li><strong>B-frames (Bidirectional frames)</strong>: Store differences from both previous and future frames</li>
+            </ul>
+
+            <h4>Visual Example with <code>g=2</code> (GOP size = 2)</h4>
+            <div class="diagram" style="font-size: 0.9rem;">
+Frame Sequence:  [0]  [1]  [2]  [3]  [4]  [5]  [6]  [7]  [8]  [9]
+Frame Type:      I    P    I    P    I    P    I    P    I    P
+                 ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓
+Storage:        [Full] [Diff] [Full] [Diff] [Full] [Diff] [Full] [Diff] [Full] [Diff]
+                 ↑              ↑              ↑              ↑              ↑
+              Keyframe      Keyframe      Keyframe      Keyframe      Keyframe
+            </div>
+
+            <h4>GOP Size Impact</h4>
+            <table>
+                <tr>
+                    <th><code>g</code> value</th>
+                    <th>Keyframe frequency</th>
+                    <th>File size</th>
+                    <th>Random access</th>
+                    <th>Decoding speed</th>
+                    <th>Use case</th>
+                </tr>
+                <tr>
+                    <td><code>g=1</code></td>
+                    <td>Every frame</td>
+                    <td>Largest (~2-3x)</td>
+                    <td>Perfect</td>
+                    <td>Fastest</td>
+                    <td>Training datasets (recommended)</td>
+                </tr>
+                <tr>
+                    <td><code>g=2</code></td>
+                    <td>Every 2nd frame</td>
+                    <td>Medium</td>
+                    <td>Good</td>
+                    <td>Fast</td>
+                    <td>Default (balanced)</td>
+                </tr>
+                <tr>
+                    <td><code>g=30</code></td>
+                    <td>Every 30th frame</td>
+                    <td>Smallest</td>
+                    <td>Poor</td>
+                    <td>Slower</td>
+                    <td>Streaming (not recommended for training)</td>
+                </tr>
+            </table>
+
+            <h4>Why This Matters for LeRobot</h4>
+            <div class="warning-box">
+                <strong>⚠️ Decoder Limitation:</strong> The <code>pyav</code> backend can only seek to keyframes. If you request a frame at timestamp <code>0.033s</code> (frame 1) but the nearest keyframe is at <code>0.0s</code> (frame 0), pyav will load frame 0 instead, causing tolerance violations.
+            </div>
+
+            <p><strong>Example with <code>g=2</code> at 30 FPS:</strong></p>
+            <ul>
+                <li>Keyframes at: <code>0.0s</code>, <code>0.067s</code>, <code>0.133s</code>, ...</li>
+                <li>Request frame at <code>0.033s</code> → pyav seeks to keyframe at <code>0.0s</code> (error: <code>0.033s</code>)</li>
+                <li>Request frame at <code>0.100s</code> → pyav seeks to keyframe at <code>0.067s</code> (error: <code>0.033s</code>)</li>
+            </ul>
+
+            <p><strong>Solutions:</strong></p>
+            <ol>
+                <li><strong>Record with <code>g=1</code></strong>: Every frame is independently accessible</li>
+                <li><strong>Use <code>torchcodec</code> backend</strong>: Can decode any frame accurately, regardless of keyframe placement</li>
+                <li><strong>Relax tolerance for pyav</strong>: Accept larger timestamp errors (already implemented in fixes)</li>
+            </ol>
+        </div>
+
+        <h2 id="troubleshooting">🔧 Common Issues & Troubleshooting</h2>
+
+        <div class="layer-card">
+            <h3>Issue: <code>to_timestamp > video_duration</code></h3>
+            <p><strong>Symptom:</strong> <code>IndexError: Invalid frame index</code> or timestamp tolerance assertion failures.</p>
+            <p><strong>Cause:</strong> Episode metadata claims frames exist beyond the actual MP4 file length.</p>
+            <p><strong>Fix strategies:</strong></p>
+            <ul>
+                <li>Record with <code>g=1</code> (every frame is keyframe) for accurate seeks</li>
+                <li>Verify <code>to_timestamp ≤ actual_video_duration</code> in QA notebook</li>
+                <li>Use frame clamping in <code>decode_video_frames_torchcodec()</code></li>
+            </ul>
+        </div>
+
+        <div class="layer-card">
+            <h3>Issue: Large keyframe gaps (pyav tolerance failures)</h3>
+            <p><strong>Symptom:</strong> <code>AssertionError: timestamps violate tolerance (1.7s > 0.0001s)</code></p>
+            <p><strong>Cause:</strong> The <code>pyav</code> backend only seeks to keyframes, which may be far apart.</p>
+            <p><strong>Fix:</strong> Use <code>torchcodec</code> or <code>video_reader</code> backend, or relax tolerance for pyav.</p>
+        </div>
+
+        <div class="layer-card">
+            <h3>Issue: Frame drops during recording</h3>
+            <p><strong>Symptom:</strong> Fewer frames in MP4 than episode metadata expects.</p>
+            <p><strong>Cause:</strong> I/O bottleneck during image writing, especially with multiple cameras.</p>
+            <p><strong>Fix:</strong></p>
+            <ul>
+                <li>Increase <code>image_writer_processes</code> or <code>image_writer_threads</code></li>
+                <li>Use faster storage (SSD vs HDD)</li>
+                <li>Lower camera resolution during recording</li>
+            </ul>
+        </div>
+
+        <div class="summary-box">
+            <h3>📊 Complete Data Flow Summary</h3>
+            <pre style="background: transparent; border: none; color: var(--text-primary);">
+1. CAPTURE (30 Hz loop)
+   Motors: USB-Serial → TTL packet → raw int → normalized radians
+   Camera: USB → raw buffer → numpy BGR → RGB array (H,W,3)
+
+2. OBSERVATION DICT
+   {"shoulder.pos": 0.123, "cam1": np.array(...), ...}
+
+3. FRAME DICT
+   {"observation.state": [6 floats], "observation.images.cam1": array}
+
+4. EPISODE BUFFER (in memory)
+   Scalars: Python lists
+   Images: Written to temp PNGs immediately
+
+5. SAVE EPISODE
+   Scalars → Parquet (columnar, compressed)
+   PNGs → MP4 (h264/svtav1, g=2 keyframes by default)
+   Metadata → Episode parquet (from_ts, to_ts, chunk/file indices)
+   Note: Multiple episodes concatenated into shared MP4 files
+
+6. TRAINING LOAD
+   Parquet → PyArrow → numpy/torch tensors
+   MP4 → torchcodec/pyav → frame at (from_ts + episode_ts)
+            </pre>
+        </div>
+    </div>
+
+    <footer>
+        <p>Generated from LeRobot codebase analysis • December 2024</p>
+        <p>Source: <a href="https://github.com/huggingface/lerobot" style="color: var(--accent-blue);">github.com/huggingface/lerobot</a></p>
+    </footer>
+</body>
+</html>
+
