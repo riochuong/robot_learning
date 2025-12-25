@@ -118,3 +118,34 @@ lerobot-teleoperate \
 
 ### VERIFY DATASET 
 uv run python verify_dataset.py dataset/pick_and_place_small_cube
+
+
+## Quick Reference
+
+```bash
+# DELETE EPISODES
+lerobot-edit-dataset --repo_id data/my_dataset \
+    --operation.type delete_episodes \
+    --operation.episode_indices "[0, 5, 10]"
+
+# SPLIT DATASET (80/20)
+lerobot-edit-dataset --repo_id data/my_dataset \
+    --operation.type split \
+    --operation.splits '{"train": 0.8, "val": 0.2}'
+
+# MERGE DATASETS
+lerobot-edit-dataset --repo_id data/merged \
+    --operation.type merge \
+    --operation.repo_ids "['data/set1', 'data/set2']"
+
+# REMOVE CAMERA
+lerobot-edit-dataset --repo_id data/my_dataset \
+    --operation.type remove_feature \
+    --operation.feature_names "['observation.images.wrist']"
+
+# CONVERT TO VIDEO
+lerobot-edit-dataset --repo_id data/old_dataset \
+    --operation.type convert_to_video \
+    --new_repo_id data/video_dataset
+```
+

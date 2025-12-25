@@ -1,4 +1,6 @@
 # Python-generated files
+models/
+librealsense/
 dataset/
 __pycache__/
 *.py[oc]
