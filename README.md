@@ -113,39 +113,97 @@ lerobot-teleoperate \
     --robot.id=my_follower_arm_so_101 \
     --teleop.type=so100_leader \
     --teleop.port=/dev/ttyACM1 \
-    --teleop.id=my_leader_arm_so_100
+    --teleop.id=my_leader_arm_so_100 \
+    --robot.cameras='{"scene": {"type": "intelrealsense", "serial_number_or_name": "247122073488", "width": 848, "height": 480, "fps": 30, use_depth: true}, "wrist": {"type": "opencv", "index_or_path": "/dev/video2", "width": 640, "height": 480, "fps": 30}}' \
+    --display_data=true
 
 
 ### VERIFY DATASET 
 uv run python verify_dataset.py dataset/pick_and_place_small_cube
 
-
-## Quick Reference
-
-```bash
-# DELETE EPISODES
-lerobot-edit-dataset --repo_id data/my_dataset \
-    --operation.type delete_episodes \
-    --operation.episode_indices "[0, 5, 10]"
-
-# SPLIT DATASET (80/20)
-lerobot-edit-dataset --repo_id data/my_dataset \
-    --operation.type split \
-    --operation.splits '{"train": 0.8, "val": 0.2}'
-
-# MERGE DATASETS
-lerobot-edit-dataset --repo_id data/merged \
-    --operation.type merge \
-    --operation.repo_ids "['data/set1', 'data/set2']"
-
-# REMOVE CAMERA
-lerobot-edit-dataset --repo_id data/my_dataset \
-    --operation.type remove_feature \
-    --operation.feature_names "['observation.images.wrist']"
-
-# CONVERT TO VIDEO
-lerobot-edit-dataset --repo_id data/old_dataset \
-    --operation.type convert_to_video \
-    --new_repo_id data/video_dataset
+### FIND CAMERAS 
+```
+lerobot-find-cameras realsense
+lerobot-find-cameras
 ```
 
+
+### CALIBRATE LEADER ARM
+# Calibration happens automatically when you first use the leader arm
+# It will prompt you through the process when you run teleoperation or recording
+
+# Method 1: Via teleoperation (recommended for first-time setup)
+sudo chmod 666 /dev/ttyACM1
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm_so_101 \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader_arm_so_100
+
+# Method 2: Calibration triggered during recording
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader_arm_so_100 \
+    --dataset.repo_id=data/test \
+    --dataset.num_episodes=1
+
+# Calibration file location:
+# ~/.cache/huggingface/lerobot/calibration/teleoperators/so100_leader/my_leader_arm_so_100.json
+
+# Recalibrate: Delete the file above and run teleoperation again
+# Or: Type 'c' when prompted to use existing calibration
+
+# See LEADER_ARM_CALIBRATION.md for detailed guide
+
+### CONFIGURE MOTOR IDs
+# Reconfigure motor IDs if motors were replaced or IDs are conflicting
+
+# For leader arm
+sudo chmod 666 /dev/ttyACM1
+lerobot-setup-motors \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/ttyACM1
+
+# For follower arm
+sudo chmod 666 /dev/ttyACM0
+lerobot-setup-motors \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0
+
+# IMPORTANT: Connect ONE motor at a time during setup!
+# The script will prompt you for each motor in reverse order:
+# gripper → wrist_roll → wrist_flex → elbow_flex → shoulder_lift → shoulder_pan
+
+# After configuring motor IDs, recalibrate:
+rm ~/.cache/huggingface/lerobot/calibration/teleoperators/so100_leader/my_leader_arm_so_100.json
+# Then run teleoperation to trigger calibration
+
+# See MOTOR_ID_CONFIGURATION.md for detailed guide
+
+### CAMERA SETUP
+```
+ 8996  v4l2-ctl -d /dev/video4 --list-ctrls
+ 9003  v4l2-ctl -d /dev/video4 -c focus_absolute=0
+ 9004  v4l2-ctl -d /dev/video4 --list-ctrls
+ 9014  v4l2-ctl -d /dev/video4 --list-ctrls
+ 9015  v4l2-ctl -d /dev/video4 -c exposure_dynamic_framerate=0
+ 9016  v4l2-ctl -d /dev/video4 -c auto_exposure=1
+ 9021  v4l2-ctl -d /dev/video4 -c exposure_time_absolute=300
+
+ 8997  v4l2-ctl -d /dev/video2 --list-ctrls
+ 8998  v4l2-ctl -d /dev/video2 -c focus_automatic_continuous=0
+ 9000  v4l2-ctl -d /dev/video2 -c focus_absolute=0
+ 9005  v4l2-ctl -d /dev/video2 -c exposure_dynamic_framerate=0
+ 9006  v4l2-ctl -d /dev/video2 -c auto_exposure=1
+ 9007  v4l2-ctl -d /dev/video2 -c exposure_time_absolute=150
+ 9009  v4l2-ctl -d /dev/video2 -c exposure_time_absolute=200
+ 9011  v4l2-ctl -d /dev/video2 -c exposure_time_absolute=300
+ 9013  v4l2-ctl -d /dev/video2 --list-ctrls
+ 9017  v4l2-ctl -d /dev/video2 -c exposure_time_absolute=150
+ 9019  v4l2-ctl -d /dev/video2 -c exposure_time_absolute=300
+ ```

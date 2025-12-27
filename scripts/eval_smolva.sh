@@ -7,7 +7,7 @@ lerobot-record \
   --robot.type=so101_follower \
   --robot.port=/dev/ttyACM0 \
   --robot.cameras='{
-    camera1: {type: intelrealsense, serial_number_or_name: 247122073488, width: 640, height: 480, fps: 30, use_depth: false, reset_device: true},
+    camera1: {type: intelrealsense, serial_number_or_name: 247122073488, width: 848, height: 480, fps: 30, use_depth: false, reset_device: true},
     camera2: {type: opencv, index_or_path: "/dev/video0", width: 640, height: 480, fps: 30, fourcc: MJPG}
   }' \
   --robot.id=my_follower_arm_so_101 \
