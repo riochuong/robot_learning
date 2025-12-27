@@ -378,7 +378,7 @@
 </head>
 <body>
     <h1>🤖 LeRobot Training Pipeline Deep Dive</h1>
-    <p class="subtitle">Understanding how data flows from dataset to model for SmolVLA, Pi0, ACT, Groot, and Diffusion policies</p>
+    <p class="subtitle">Understanding how data flows from dataset to model for SmolVLA, Pi0, ACT, Groot, X-VLA, and Diffusion policies</p>
 
     <div class="toc">
         <h3>📑 Table of Contents</h3>
@@ -393,7 +393,8 @@
             <li><a href="#act">8. ACT: Action Chunking Transformer</a></li>
             <li><a href="#groot">9. Groot: NVIDIA GR00T Integration</a></li>
             <li><a href="#diffusion">10. Diffusion Policy: Denoising Actions</a></li>
-            <li><a href="#comparison">11. Model Comparison Summary</a></li>
+            <li><a href="#xvla">11. X-VLA: Cross-Embodiment VLA</a></li>
+            <li><a href="#comparison">12. Model Comparison Summary</a></li>
         </ul>
     </div>
 
@@ -1949,9 +1950,304 @@ input_steps = [
     </div>
 
     <!-- ============================================ -->
-    <!-- SECTION 11: Comparison -->
+    <!-- SECTION 11: X-VLA -->
     <!-- ============================================ -->
-    <h2 id="comparison">📊 11. Model Comparison Summary</h2>
+    <h2 id="xvla">🌐 11. X-VLA: Cross-Embodiment VLA</h2>
+
+    <h3>Architecture Overview</h3>
+    
+    <p>X-VLA (Cross-Embodiment Vision-Language-Action) uses Florence-2 as VLM backbone with a soft-prompted transformer for cross-robot generalization:</p>
+
+    <div class="code-block">
+        <pre><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│                              X-VLA Architecture                              │
+│                      (Cross-Embodiment VLA)                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│    Multi-View Images ──► Florence-2 Vision Tower ──► Image Features ──┐     │
+│                                                                        │     │
+│    Language ──► Florence-2 BART Tokenizer ──► Token Embeddings ───────┼──►  │
+│                                                                        │     │
+│                         FLORENCE-2 ENCODER                                   │
+│               (Vision + Language merged via multimodal projector)            │
+│                              │                                               │
+│                              ▼                                               │
+│                    VLM Features (encoder output)                             │
+│                              │                                               │
+│    ┌───────────────────────────────┴───────────────────────────────┐        │
+│    │                                                               │        │
+│    ▼                                                               ▼        │
+│  Domain ID (embodiment identifier)                    Aux Visual Inputs     │
+│    │                                                               │        │
+│    │          Proprioception State ──► Linear Projection          │        │
+│    │                                   │                           │        │
+│    └──────────────────────┬────────────┘                           │        │
+│                           ▼                                        │        │
+│               SOFT PROMPT HUB (Per-Domain Embediments)             │        │
+│             - 30 domains × 32 learnable prompt tokens              │        │
+│             - Rapid adaptation to new robots                       │        │
+│                           │                                        │        │
+│                           ▼                                        │        │
+│               SOFT-PROMPTED TRANSFORMER                            │        │
+│             - 24 layers × 16 heads × 1024 hidden                   │        │
+│             - Flow matching for action generation                  │        │
+│             - Heterogeneous input projections                      │        │
+│                           │                                        │        │
+│                           ▼                                        │        │
+│            Action Denoising (Flow Matching)                        │        │
+│            x_t = t * noise + (1-t) * action                        │        │
+│            Predict velocity field: noise - action                  │        │
+│                           │                                        │        │
+│                           ▼                                        │        │
+│          ACTION HEAD (with Action Space Registry)                  │        │
+│          - ee6d: End-effector 6D + gripper (20D)                   │        │
+│          - so101_bimanual: SO101 bimanual (12D real → 20D model)   │        │
+│          - auto: Auto-detect from dataset                          │        │
+│                           │                                        │        │
+│                           ▼                                        │        │
+│              Predicted Action Chunk (chunk_size=32)                │        │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘</code></pre>
+    </div>
+
+    <h3>Key Differences from Other VLAs</h3>
+    
+    <ul>
+        <li><strong>VLM Backbone:</strong> Florence-2 (DaViT vision + BART language) vs PaliGemma/SmolVLM</li>
+        <li><strong>Cross-Embodiment:</strong> Soft prompts per domain (30 robot types) for rapid adaptation</li>
+        <li><strong>Action Registry:</strong> Pluggable action spaces (ee6d, so101_bimanual, auto)</li>
+        <li><strong>Multi-View:</strong> Supports multiple camera views with auxiliary visual inputs</li>
+        <li><strong>Freezing Strategy:</strong> Freeze VLM encoders, train only soft prompts + transformer</li>
+        <li><strong>Training:</strong> Two-phase (pretraining on 290K episodes, then domain adaptation)</li>
+    </ul>
+
+    <div class="callout-warning">
+        <strong>⚠️ Key Feature: Action Space Registry</strong><br>
+        X-VLA uses an <strong>Action Registry</strong> system to handle different robots. Each action mode defines its own loss (MSE for joints, BCE for grippers). The <code>so101_bimanual</code> mode pads 12D real actions → 20D model actions. The <code>auto</code> mode auto-detects action dim from dataset. This enables a single pretrained model to work across diverse robots.
+    </div>
+
+    <h3>Step-by-Step Forward Pass</h3>
+
+    <h4>Step 1: Encode Vision-Language via Florence-2</h4>
+    
+    <div class="code-block">
+        <pre><code><span class="keyword">def</span> <span class="function">forward_vlm</span>(<span class="keyword">self</span>, input_ids, pixel_values, image_mask):
+    <span class="comment">"""Encode text and multi-view images via Florence-2 encoder."""</span>
+    batch_size, num_views = pixel_values.shape[:2]
+    
+    <span class="comment"># 1a. Flatten and filter valid images</span>
+    flat_images = pixel_values.flatten(0, 1)  <span class="comment"># (B*V, C, H, W)</span>
+    flat_mask = image_mask.view(-1).to(dtype=torch.bool)
+    valid_images = flat_images[flat_mask]
+    
+    <span class="comment"># 1b. Encode images with Florence-2 vision tower</span>
+    valid_feats = <span class="keyword">self</span>.vlm._encode_image(valid_images)
+    
+    <span class="comment"># 1c. Reconstruct to (B, V, tokens, hidden)</span>
+    image_features = valid_feats.new_zeros((batch_size * num_views, tokens_per_view, hidden_dim))
+    image_features[flat_mask] = valid_feats
+    image_features = image_features.view(batch_size, num_views, tokens_per_view, hidden_dim)
+    
+    <span class="comment"># 1d. Embed language tokens</span>
+    inputs_embeds = <span class="keyword">self</span>.vlm.get_input_embeddings()(input_ids)
+    
+    <span class="comment"># 1e. Merge primary view with text via multimodal projector</span>
+    merged_embeds, attention_mask = <span class="keyword">self</span>.vlm._merge_input_ids_with_image_features(
+        image_features[:, 0],  <span class="comment"># Primary view</span>
+        inputs_embeds,
+    )
+    
+    <span class="comment"># 1f. Pass through Florence-2 BART encoder</span>
+    enc_out = <span class="keyword">self</span>.vlm.language_model.model.encoder(
+        attention_mask=attention_mask,
+        inputs_embeds=merged_embeds,
+    )[0]
+    
+    <span class="comment"># 1g. Prepare auxiliary views (views 1+)</span>
+    aux_visual_inputs = image_features[:, 1:].reshape(batch_size, -1, hidden_dim)
+    
+    <span class="keyword">return</span> {<span class="string">"vlm_features"</span>: enc_out, <span class="string">"aux_visual_inputs"</span>: aux_visual_inputs}</code></pre>
+    </div>
+
+    <h4>Step 2: Flow Matching Training</h4>
+    
+    <div class="code-block">
+        <pre><code><span class="keyword">def</span> <span class="function">forward</span>(<span class="keyword">self</span>, input_ids, image_input, image_mask, domain_id, proprio, action):
+    <span class="comment">"""Forward pass for X-VLA model."""</span>
+    <span class="comment"># 2a. Encode vision-language</span>
+    enc = <span class="keyword">self</span>.forward_vlm(input_ids, image_input, image_mask)
+    
+    <span class="comment"># 2b. Sample random timestep for flow matching</span>
+    batch_size = input_ids.shape[0]
+    t = (torch.rand(1, device=device, dtype=dtype)
+         + torch.arange(batch_size, device=device, dtype=dtype) / batch_size) % (1 - 1e-5)
+    
+    <span class="comment"># 2c. Flow matching interpolation: x_t = t * noise + (1-t) * action</span>
+    action_noisy = torch.randn_like(action) * t.view(-1, 1, 1) + action * (1 - t).view(-1, 1, 1)
+    
+    <span class="comment"># 2d. Preprocess via action space (e.g., zero out grippers, pad dimensions)</span>
+    proprio_m, action_noisy_m = <span class="keyword">self</span>.action_space.preprocess(proprio, action_noisy)
+    
+    <span class="comment"># 2e. Pass through soft-prompted transformer</span>
+    pred_action = <span class="keyword">self</span>.transformer(
+        domain_id=domain_id,          <span class="comment"># Which robot embodiment</span>
+        action_with_noise=action_noisy_m,
+        t=t,                          <span class="comment"># Flow matching timestep</span>
+        proprio=proprio_m,
+        **enc,                        <span class="comment"># VLM features + aux visuals</span>
+    )
+    
+    <span class="comment"># 2f. Compute action space-specific loss</span>
+    <span class="keyword">return</span> <span class="keyword">self</span>.action_space.compute_loss(pred_action, action)</code></pre>
+    </div>
+
+    <h4>Step 3: Inference with Flow Matching</h4>
+    
+    <div class="code-block">
+        <pre><code><span class="keyword">@torch.no_grad</span>()
+<span class="keyword">def</span> <span class="function">generate_actions</span>(<span class="keyword">self</span>, input_ids, image_input, image_mask, domain_id, proprio, steps):
+    <span class="comment">"""Generate actions via flow matching denoising."""</span>
+    <span class="keyword">self</span>.eval()
+    
+    <span class="comment"># 3a. Encode vision-language (once)</span>
+    enc = <span class="keyword">self</span>.forward_vlm(input_ids, image_input, image_mask)
+    
+    <span class="comment"># 3b. Start from random noise</span>
+    batch_size = input_ids.shape[0]
+    x1 = torch.randn(batch_size, <span class="keyword">self</span>.chunk_size, action_dim, device=device)
+    action = torch.zeros_like(x1)
+    
+    <span class="comment"># 3c. Iterative denoising (default: 10 steps)</span>
+    steps = max(1, int(steps))
+    <span class="keyword">for</span> i <span class="keyword">in</span> range(steps, 0, -1):
+        t = torch.full((batch_size,), i / steps, device=device)
+        
+        <span class="comment"># Interpolate: x_t = t * x1 + (1-t) * action</span>
+        x_t = x1 * t.view(-1, 1, 1) + action * (1 - t).view(-1, 1, 1)
+        
+        <span class="comment"># Preprocess and predict</span>
+        proprio_m, x_t_m = <span class="keyword">self</span>.action_space.preprocess(proprio, x_t)
+        action = <span class="keyword">self</span>.transformer(
+            domain_id=domain_id,
+            action_with_noise=x_t_m,
+            proprio=proprio_m,
+            t=t,
+            **enc,
+        )
+    
+    <span class="comment"># 3d. Postprocess (e.g., apply sigmoid to grippers, trim padding)</span>
+    <span class="keyword">return</span> <span class="keyword">self</span>.action_space.postprocess(action)</code></pre>
+    </div>
+
+    <h3>🔑 Key Concept: Soft Prompt Hub (Cross-Embodiment)</h3>
+    
+    <p>X-VLA achieves cross-embodiment generalization via <strong>soft prompt hub</strong>:</p>
+
+    <div class="code-block">
+        <pre><code><span class="comment"># Soft Prompt Hub: 30 domains × 32 learnable tokens per domain</span>
+<span class="keyword">self</span>.soft_prompt_hub = nn.Parameter(torch.zeros(num_domains, len_soft_prompts, hidden_size))
+
+<span class="comment"># At runtime, select prompts for specific embodiment</span>
+domain_prompts = <span class="keyword">self</span>.soft_prompt_hub[domain_id]  <span class="comment"># (B, 32, 1024)</span>
+
+<span class="comment"># These prompts are prepended to transformer input</span>
+<span class="comment"># They encode embodiment-specific information (kinematics, workspace, etc.)</span></code></pre>
+    </div>
+
+    <p><strong>Benefits:</strong></p>
+    <ul>
+        <li><strong>Rapid Adaptation:</strong> Fine-tune only 32 prompts (32K params) for new robot</li>
+        <li><strong>Frozen Backbone:</strong> VLM encoders stay frozen, preserving pretrained knowledge</li>
+        <li><strong>Data Efficient:</strong> 3K steps sufficient to adapt to new embodiment</li>
+        <li><strong>Scalability:</strong> Support 30+ robot types with single model</li>
+    </ul>
+
+    <h3>🔑 Key Concept: Action Space Registry</h3>
+    
+    <p>X-VLA uses an <strong>Action Registry</strong> to handle different action spaces:</p>
+
+    <div class="code-block">
+        <pre><code><span class="comment"># Example: SO101 Bimanual (12D real → 20D model)</span>
+<span class="keyword">@register_action</span>(<span class="string">"so101_bimanual"</span>)
+<span class="keyword">class</span> <span class="class-name">BimanualSO101ActionSpace</span>(BaseActionSpace):
+    dim_action = 20          <span class="comment"># Model output dimension</span>
+    REAL_DIM = 12           <span class="comment"># Real robot dimension</span>
+    gripper_idx = (5, 11)   <span class="comment"># Gripper indices</span>
+    
+    <span class="keyword">def</span> <span class="function">preprocess</span>(<span class="keyword">self</span>, proprio, action):
+        <span class="comment">"""Pad 12D real actions to 20D for model."""</span>
+        action = pad_to_20d(action)
+        <span class="comment"># Zero out gripper channels during training</span>
+        action[:, :, <span class="keyword">self</span>.gripper_idx] = 0
+        <span class="keyword">return</span> proprio, action
+    
+    <span class="keyword">def</span> <span class="function">compute_loss</span>(<span class="keyword">self</span>, pred, target):
+        <span class="comment">"""MSE for joints, BCE for grippers."""</span>
+        joint_loss = F.mse_loss(pred[:, :, joint_idxs], target[:, :, joint_idxs])
+        gripper_loss = F.binary_cross_entropy_with_logits(
+            pred[:, :, gripper_idx], target[:, :, gripper_idx]
+        )
+        <span class="keyword">return</span> {<span class="string">"joint_loss"</span>: joint_loss, <span class="string">"gripper_loss"</span>: gripper_loss}
+    
+    <span class="keyword">def</span> <span class="function">postprocess</span>(<span class="keyword">self</span>, action):
+        <span class="comment">"""Trim 20D model output to 12D real, apply sigmoid to grippers."""</span>
+        action = action[:, :<span class="keyword">self</span>.REAL_DIM]  <span class="comment"># Trim padding</span>
+        action[:, <span class="keyword">self</span>.gripper_idx] = torch.sigmoid(action[:, <span class="keyword">self</span>.gripper_idx])
+        <span class="keyword">return</span> action</code></pre>
+    </div>
+
+    <h3>Training Configuration</h3>
+    
+    <div class="code-block">
+        <pre><code><span class="comment"># Two-phase training strategy</span>
+<span class="comment"># Phase I: Pretraining (290K episodes, multi-embodiment)</span>
+lerobot-train \
+    --policy.type=xvla \
+    --policy.path=lerobot/xvla-base \
+    --dataset.repo_id=multi_embodiment_dataset \
+    --policy.freeze_vision_encoder=true \
+    --policy.freeze_language_encoder=true \
+    --policy.train_soft_prompts=true \
+    --steps=100000
+
+<span class="comment"># Phase II: Domain Adaptation (3K steps, target robot)</span>
+lerobot-train \
+    --policy.type=xvla \
+    --policy.path=lerobot/xvla-base \
+    --dataset.repo_id=bimanual_so101_dataset \
+    --policy.action_mode=so101_bimanual \
+    --policy.freeze_vision_encoder=false \  <span class="comment"># Unfreeze for best performance</span>
+    --policy.freeze_language_encoder=false \
+    --policy.train_soft_prompts=true \
+    --steps=3000</code></pre>
+    </div>
+
+    <h3>Differential Learning Rates</h3>
+    
+    <p>X-VLA uses <strong>XVLAAdamW</strong> optimizer with differential LRs:</p>
+
+    <div class="code-block">
+        <pre><code><span class="comment"># Optimizer applies different learning rates based on parameter names</span>
+optimizer = XVLAAdamW(
+    model.get_optim_params(),
+    lr=1e-4,                                    <span class="comment"># Base LR</span>
+    betas=(0.9, 0.99),
+    weight_decay=0.0,
+)
+
+<span class="comment"># Learning rate scheme:</span>
+<span class="comment"># - VLM parameters (vision/language encoders): lr / 10 = 1e-5</span>
+<span class="comment"># - Soft prompts: lr * soft_prompt_lr_scale = 1e-4 (default)</span>
+<span class="comment"># - Transformer/action head: lr = 1e-4</span>
+
+<span class="comment"># This ensures stable optimization of pretrained VLM while allowing</span>
+<span class="comment"># rapid adaptation of task-specific components</span></code></pre>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- SECTION 12: Comparison -->
+    <!-- ============================================ -->
+    <h2 id="comparison">📊 12. Model Comparison Summary</h2>
 
     <table class="comparison-table">
         <thead>
@@ -1964,6 +2260,7 @@ input_steps = [
                 <th>ACT</th>
                 <th>Groot</th>
                 <th>Diffusion</th>
+                <th>X-VLA</th>
             </tr>
         </thead>
         <tbody>
@@ -1976,6 +2273,7 @@ input_steps = [
                 <td>ResNet18</td>
                 <td>Eagle VL</td>
                 <td>ResNet (configurable)</td>
+                <td>DaViT (Florence-2)</td>
             </tr>
             <tr>
                 <td><strong>Language Model</strong></td>
@@ -1986,6 +2284,7 @@ input_steps = [
                 <td>None</td>
                 <td>Eagle LLM</td>
                 <td>None</td>
+                <td>BART (Florence-2)</td>
             </tr>
             <tr>
                 <td><strong>Action Generation</strong></td>
@@ -1996,6 +2295,7 @@ input_steps = [
                 <td>Encoder-Decoder</td>
                 <td>Flow Matching (DiT)</td>
                 <td>DDPM/DDIM Denoising</td>
+                <td>Flow Matching</td>
             </tr>
             <tr>
                 <td><strong>Image Resolution</strong></td>
@@ -2006,6 +2306,7 @@ input_steps = [
                 <td>96×96 (configurable)</td>
                 <td>Variable (Eagle)</td>
                 <td>96×96 (configurable)</td>
+                <td>Variable (resizable)</td>
             </tr>
             <tr>
                 <td><strong>Default chunk_size</strong></td>
@@ -2016,6 +2317,7 @@ input_steps = [
                 <td>100</td>
                 <td>16</td>
                 <td>Variable (horizon)</td>
+                <td>32</td>
             </tr>
             <tr>
                 <td><strong>Loss Function</strong></td>
@@ -2026,6 +2328,7 @@ input_steps = [
                 <td>L1 + KL (VAE)</td>
                 <td>MSE (velocity)</td>
                 <td>MSE (noise/sample)</td>
+                <td>Action-space specific</td>
             </tr>
             <tr>
                 <td><strong>Normalization</strong></td>
@@ -2036,6 +2339,7 @@ input_steps = [
                 <td>Mean-Std (all)</td>
                 <td>Min-Max</td>
                 <td>Mean-Std (all)</td>
+                <td>Identity (ImageNet for vision)</td>
             </tr>
             <tr>
                 <td><strong>Language Conditioning</strong></td>
@@ -2046,6 +2350,7 @@ input_steps = [
                 <td>❌ No</td>
                 <td>✅ Yes</td>
                 <td>❌ No</td>
+                <td>✅ Yes</td>
             </tr>
             <tr>
                 <td><strong>Robot State Input</strong></td>
@@ -2056,6 +2361,7 @@ input_steps = [
                 <td>✅ Yes</td>
                 <td>✅ Yes</td>
                 <td>✅ Yes</td>
+                <td>✅ Linear projection</td>
             </tr>
             <tr>
                 <td><strong>Expert Size</strong></td>
@@ -2066,6 +2372,7 @@ input_steps = [
                 <td>N/A</td>
                 <td>DiT</td>
                 <td>UNet</td>
+                <td>Transformer (24L, 16H, 1024D)</td>
             </tr>
             <tr>
                 <td><strong>Tokenizer Length</strong></td>
@@ -2076,6 +2383,7 @@ input_steps = [
                 <td>N/A</td>
                 <td>Variable</td>
                 <td>N/A</td>
+                <td>64 tokens (BART)</td>
             </tr>
             <tr>
                 <td><strong>Finetuning Strategy</strong></td>
@@ -2086,6 +2394,7 @@ input_steps = [
                 <td>Full model</td>
                 <td>Configurable</td>
                 <td>Full model</td>
+                <td>Soft prompts + Transformer</td>
             </tr>
             <tr>
                 <td><strong>Inference Steps</strong></td>
@@ -2096,6 +2405,40 @@ input_steps = [
                 <td>1 (direct)</td>
                 <td>10 (flow steps)</td>
                 <td>100 (denoising)</td>
+                <td>10 (flow steps)</td>
+            </tr>
+            <tr>
+                <td><strong>Cross-Embodiment</strong></td>
+                <td>❌ No</td>
+                <td>❌ No</td>
+                <td>❌ No</td>
+                <td>❌ No</td>
+                <td>❌ No</td>
+                <td>✅ Yes</td>
+                <td>❌ No</td>
+                <td>✅ Yes (Soft prompts)</td>
+            </tr>
+            <tr>
+                <td><strong>Action Space Registry</strong></td>
+                <td>❌ No</td>
+                <td>❌ No</td>
+                <td>❌ No</td>
+                <td>❌ No</td>
+                <td>❌ No</td>
+                <td>❌ No</td>
+                <td>❌ No</td>
+                <td>✅ Yes (Pluggable)</td>
+            </tr>
+            <tr>
+                <td><strong>Multi-View Support</strong></td>
+                <td>❌ No</td>
+                <td>❌ No</td>
+                <td>❌ No</td>
+                <td>❌ No</td>
+                <td>✅ Yes</td>
+                <td>✅ Yes</td>
+                <td>❌ No</td>
+                <td>✅ Yes</td>
             </tr>
         </tbody>
     </table>
@@ -2105,11 +2448,12 @@ input_steps = [
         <ul>
             <li><strong>SmolVLA:</strong> Best for language-conditioned tasks with limited compute. Lightweight and fast.</li>
             <li><strong>Pi0:</strong> High-quality VLA with strong generalization. Uses robot state. Good for complex manipulation tasks.</li>
-            <li><strong>Pi0.5:</strong> Open-world generalization without robot state. Uses AdaRMS conditioning. Longer language instructions (200 tokens).</li>
+            <li><strong>Pi0.5:</strong> Open-world generalization without robot state. Uses AdaRMS conditioning. Longer language instructions (200 tokens). <strong>97.5% LIBERO benchmark.</strong></li>
             <li><strong>Pi0.5-Fast:</strong> Pi0.5 with 5 inference steps instead of 10. ~2x faster inference, slightly lower quality.</li>
             <li><strong>ACT:</strong> Best for bimanual manipulation (Aloha). Fast inference, simple architecture.</li>
-            <li><strong>Groot:</strong> Multi-embodiment support. Good for transferring policies across robots.</li>
+            <li><strong>Groot:</strong> Multi-embodiment support. Good for transferring policies across robots. <strong>87% LIBERO benchmark.</strong></li>
             <li><strong>Diffusion:</strong> Versatile and proven. Good for multi-modal action distributions.</li>
+            <li><strong>X-VLA:</strong> <strong>Cross-embodiment champion.</strong> Florence-2 backbone + soft prompts for rapid adaptation. Pluggable action spaces (ee6d, so101_bimanual, auto). <strong>93% LIBERO, 100% cloth folding.</strong> Best for transferring across diverse robots or bimanual SO101.</li>
         </ul>
     </div>
 
