@@ -12,8 +12,11 @@ lerobot-train \
   --dataset.video_backend=torchcodec \
   --dataset.root=/home/cd105-dgx/workspace/robot_training/dataset/pick_small_cube \
   --batch_size=128 \
-  --steps=10000 \
-  --save_freq=5000 \
+  --steps=20000 \
+  --save_freq=1000 \
+  --policy.gradient_checkpointing=true \
+  --policy.compile_model=true \
+  --policy.dtype=bfloat16 \
   --output_dir=${OUTPUT_DIR} \
   --policy.device=cuda \
   --policy.push_to_hub=false \
