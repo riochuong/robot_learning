@@ -29,8 +29,9 @@ lerobot-train \
   --log_freq=500 \
   --policy.tune_projector=true \
   --policy.tune_diffusion_model=true \
-  --policy.tune_llm=true \
-  --policy.tune_visual=true \
+  --policy.tune_llm=false \
+  --policy.tune_visual=false \
+  --policy.embodiment_tag=so100 \
   --wandb.enable=true \
   --policy.device=cuda
 
